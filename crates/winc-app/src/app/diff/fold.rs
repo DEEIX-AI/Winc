@@ -83,44 +83,134 @@ impl App {
         }
     }
 
-    /// 在差异标签中执行折叠命令 `command`，作用于未改动的长段；返回当前标签是否为差异标签。
+    /// 在差异标签中执行折叠命令 `command`；返回当前标签是否为差异标签。
     ///
-    /// 「全部折叠」「全部展开」作用于所有未改动的长段；折叠、展开和切换作用于只读光标所在的
-    /// 一段，没有只读光标时作用于编辑区顶部往下的第一段。按层级折叠在差异中没有对应的操作。
+    /// 命令作用于代码块，与编辑器相同：光标在右侧工作区文件中时作用于右侧，否则作用于只读光标
+    /// 所在的一侧，尚未放置光标时作用于右侧窗口顶部的代码。「全部折叠」「全部展开」同时收起、
+    /// 展开未改动的长段。
     pub(in crate::app) fn fold_diff(&mut self, command: FoldCommand) -> bool {
         let Some(view) = self.editor.active().and_then(|d| d.diff.as_deref()) else {
             return false;
         };
-        let top = self.editor.active().map_or(0.0, |d| d.scroll_line.max(0.0));
-        let top = view.row_at(RIGHT, top) as usize;
-        let gap = match view.read_caret() {
-            Some((side, pos)) => {
+        let source = view.editing.then(|| {
+            let path = view.new.path.as_deref()?;
+            let source =
+                (self.editor.documents.iter()).position(|doc| doc.path.as_deref() == Some(path))?;
+            let doc = &self.editor.documents[source];
+            Some((source, doc.text().pos_to_line_col(doc.selection.head).0))
+        });
+        let caret = (source
+            .flatten()
+            .map(|(source, line)| (RIGHT, line, Some(source))))
+        .or_else(|| {
+            view.read_caret().map(|(side, pos)| {
                 let text = &view.side(side).text;
-                view.gap_of(side, text.char_to_line(pos.min(text.len_chars())))
-            }
-            None => view.rows[RIGHT].iter().skip(top).find_map(|row| match row {
-                SideRow::Fold { gap, .. } => Some(*gap),
-                SideRow::Line { line, hunk, .. } => {
-                    hunk.is_none().then(|| view.gap_of(RIGHT, *line)).flatten()
-                }
-            }),
-        };
-        let open = gap.is_some_and(|gap| view.is_open(gap));
-        match (command, gap) {
-            (FoldCommand::FoldAll, _) => self.refold_diff(DiffView::fold_all),
-            (FoldCommand::UnfoldAll, _) => self.refold_diff(DiffView::unfold_all),
-            (FoldCommand::Fold | FoldCommand::FoldRecursively | FoldCommand::Toggle, Some(gap))
-                if open =>
-            {
-                self.press_diff(DiffTarget::Refold(gap))
-            }
-            (
-                FoldCommand::Unfold | FoldCommand::UnfoldRecursively | FoldCommand::Toggle,
-                Some(gap),
-            ) => self.press_diff(DiffTarget::Fold(gap)),
+                (side, text.char_to_line(pos.min(text.len_chars())), None)
+            })
+        });
+        let (side, line, source) = caret.unwrap_or_else(|| {
+            let top = self.editor.active().map_or(0.0, |d| d.scroll_line.max(0.0));
+            let top = view.row_at(RIGHT, top) as usize;
+            let line = (view.rows[RIGHT].iter().skip(top))
+                .map(|row| match row {
+                    SideRow::Line { line, .. } => *line,
+                    SideRow::Fold { lines, .. } => lines.start,
+                })
+                .next()
+                .unwrap_or(0);
+            (RIGHT, line, None)
+        });
+        self.change_diff_code_folds(source, |view, top, tab_width| {
+            view.run_code_fold((side, line), command, top, tab_width)
+        });
+        match command {
+            FoldCommand::FoldAll => self.refold_diff(DiffView::fold_all),
+            FoldCommand::UnfoldAll => self.refold_diff(DiffView::unfold_all),
             _ => {}
         }
         true
+    }
+
+    /// 点击差异第 `side` 侧第 `line` 行的代码折叠箭头或收起标记。
+    pub(super) fn toggle_diff_code_fold(&mut self, side: usize, line: usize) {
+        self.change_diff_code_folds(None, |view, top, tab_width| {
+            view.toggle_code_fold_at((side, line), top, tab_width)
+        });
+    }
+
+    /// 以 `change` 修改当前差异标签的代码折叠，右侧顶部的内容保持在顶部。
+    ///
+    /// `change` 的参数为差异视图、修改前右侧顶部的显示行和 Tab 宽度，返回值见
+    /// [`DiffView::run_code_fold`]。光标所在的行被收起时停在收起后显示的行末：`source` 是右侧
+    /// 对应的文档时移动该文档的光标，否则移动差异的只读光标。
+    fn change_diff_code_folds(
+        &mut self,
+        source: Option<usize>,
+        change: impl FnOnce(&mut DiffView, usize, usize) -> (usize, bool, usize),
+    ) {
+        self.finish_diff_fold(true);
+        let tab_width = self.editor.active_tab_width();
+        let Some(doc) = self.editor.active_mut() else {
+            return;
+        };
+        let top = doc.scroll_line.max(0.0);
+        let Some(view) = doc.diff.as_deref_mut() else {
+            return;
+        };
+        let top = view.row_at(RIGHT, top) as usize;
+        let (row, changed, visible) = change(view, top, tab_width);
+        if !changed {
+            return;
+        }
+        // 只读光标所在的行被收起时（任一侧的折叠都可能隐藏该行），移到收起后显示的行末。
+        if let Some((side, pos)) = view.read_caret() {
+            let text = &view.side(side).text;
+            let line = text.char_to_line(pos.min(text.len_chars()));
+            let shown = view.visible_code_line(side, line);
+            if shown != line {
+                let pos = text.line_end(shown);
+                view.read_selection = Some(ReadSelection {
+                    side,
+                    range: (pos, pos),
+                });
+            }
+        }
+        let row = view.pos_of(RIGHT, row as f64);
+        set_scroll_line(doc, row);
+        if let Some(source) = source {
+            let source = &mut self.editor.documents[source];
+            if source.text().pos_to_line_col(source.selection.head).0 != visible {
+                let pos = source.text().line_end(visible);
+                source.collapse_selections();
+                source.selection = Selection::point(pos);
+            }
+        }
+        self.clamp_scroll();
+        self.request_redraw();
+    }
+
+    /// 使所有已打开和之后打开的差异按设置（`diffCollapseUnchanged`）折叠或展开未更改的内容：
+    /// 标题栏上的开关和设置是同一项。各标签顶部的行保持在顶部。
+    pub(in crate::app) fn apply_diff_collapse(&mut self) {
+        let on = self.config.diff_collapse_unchanged != Some(false);
+        self.finish_diff_fold(true);
+        self.editor.diff_collapse = on;
+        for doc in &mut self.editor.documents {
+            let Some(view) = doc.diff.as_deref_mut() else {
+                continue;
+            };
+            if view.collapses() == on {
+                continue;
+            }
+            let row = view.row_at(RIGHT, doc.scroll_line.max(0.0)) as usize;
+            let row = view.set_collapse(on, row);
+            let scroll = view.pos_of(RIGHT, row as f64);
+            set_scroll_line(doc, scroll);
+        }
+        self.apply_combined_collapse(on);
+        self.relayout();
+        self.clamp_scroll();
+        self.request_redraw();
     }
 
     /// 以 `change` 修改当前差异标签的折叠状态，右侧顶部的行保持在顶部。

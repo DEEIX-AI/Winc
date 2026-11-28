@@ -165,7 +165,7 @@ fn zoom_stops_at_the_first_and_last_steps() {
     app.on_mouse_up(MouseButton::Left);
     // 放大的位图直接取最近的像素绘制，不另存放大后的位图。
     assert!(app.preview.picture_cache.is_none());
-    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+    let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
     let center = (
         ((area.x + area.w / 2.0) * SCALE) as usize,
         ((area.y + area.h / 2.0) * SCALE) as usize,
@@ -325,7 +325,15 @@ fn a_zoomed_svg_is_rasterized_only_where_it_is_seen() {
     let (mut app, dir) = large_image("picture-region");
     let (_, area) = placed(&app);
     point_at(&mut app, (0.5, 0.5));
-    let before = (app.frame.renderer.as_ref().unwrap().image().unwrap().pixels).clone();
+    let before = (app
+        .frame
+        .renderer
+        .as_ref()
+        .unwrap()
+        .snapshot()
+        .unwrap()
+        .pixels)
+        .clone();
     for _ in 0..5 {
         zoom(&mut app, true);
     }
@@ -351,7 +359,7 @@ fn a_zoomed_svg_is_rasterized_only_where_it_is_seen() {
 
     // 超过后先显示低分辨率的位图，不留空白：右端新露出的部分已有图片的颜色。
     scroll(&mut app, -400.0, 0.0);
-    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+    let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
     let edge = (
         ((area.right() - 8.0) * SCALE) as usize,
         ((area.y + area.h / 2.0) * SCALE) as usize,
@@ -364,7 +372,7 @@ fn a_zoomed_svg_is_rasterized_only_where_it_is_seen() {
     assert_eq!(sharp.origin.0, origin.0 + 440 * SCALE as u32);
 
     // 图片只绘制在预览区域内：侧栏的像素与放大之前相同（底部的状态栏显示倍数，不比较）。
-    let after = app.frame.renderer.as_ref().unwrap().image().unwrap();
+    let after = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
     let width = after.width as usize;
     let sidebar = (app.layout.sidebar.w * SCALE) as usize;
     let rows = (TOP_BAR_END * SCALE) as usize..((SIZE.1 - 50.0) * SCALE) as usize;
@@ -421,7 +429,7 @@ fn a_zoom_transition_rasterizes_only_the_final_size() {
 fn a_shrunk_bitmap_is_resampled_once_per_size() {
     let dir = sample_folder("picture-shrink");
     let path = dir.join("wide.png");
-    let image = Image {
+    let image = Snapshot {
         pixels: vec![0xff_ffff; 2000 * 4],
         width: 2000,
         height: 4,

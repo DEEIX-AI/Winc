@@ -60,6 +60,11 @@ impl App {
                 None => crate::app::MenuCommand::UsePlainText.label(),
             };
             (name.to_owned(), false)
+        } else if setting == Setting::SplitPreviewPosition {
+            let text = crate::layout::split_preview_position_label(
+                self.config.split_preview_left == Some(true),
+            );
+            (text.to_owned(), false)
         } else if setting == Setting::TextWidth {
             let choice = self.config.markdown_text_width.unwrap_or_default();
             (crate::layout::text_width_label(choice).to_owned(), false)

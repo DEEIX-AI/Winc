@@ -5,6 +5,40 @@ use super::*;
 use crate::app::scroll::set_scroll_line;
 
 impl App {
+    /// 只读差异光标跳到配对括号；返回是否处理了命令。
+    pub(in crate::app) fn jump_diff_read_bracket(&mut self) -> bool {
+        let Some(index) = self.editor.active else {
+            return false;
+        };
+        let Some(view) = self.editor.documents[index].diff.as_deref() else {
+            return false;
+        };
+        if view.editing {
+            return false;
+        }
+        let Some((side, pos)) = view.read_caret() else {
+            return false;
+        };
+        let text = &view.side(side).text;
+        let Some(target) = winc_core::transform::jump_to_bracket(text, pos) else {
+            return true;
+        };
+        let (line, col) = text.pos_to_line_col(target);
+        let cell =
+            winc_core::text::col_to_cell(text.line(line), col, self.editor.active_tab_width());
+        let Some(view) = self.editor.documents[index].diff.as_deref_mut() else {
+            return true;
+        };
+        view.read_selection = Some(ReadSelection {
+            side,
+            range: (target, target),
+        });
+        self.diff_scroll_to(index, side, (line, col), cell);
+        self.reset_blink();
+        self.request_redraw();
+        true
+    }
+
     /// 当前标签是差异且两侧都没有光标时，把只读光标放在窗口顶部一行的行首，返回是否已放置。
     ///
     /// 右侧有内容时放在右侧，否则放在左侧。

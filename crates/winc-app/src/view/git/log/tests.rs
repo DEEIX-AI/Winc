@@ -50,11 +50,10 @@ fn lane_edges_run_level_with_the_dot_then_turn_a_rounded_corner() {
 /// 折行在词与词之间换行，换行处不留空格，比一行还长的词按字拆开；截短时「…」前不留空白。
 #[test]
 fn wrap_and_truncate_text() {
-    let mut renderer =
-        winc_render::Renderer::offscreen(64.0, 64.0, 1.0, Color::hex(0), None, None).unwrap();
+    let mut renderer = cpui_render::Renderer::offscreen(64.0, 64.0, 1.0, Color::hex(0)).unwrap();
     renderer.draw(|frame| {
         let size = 13.0;
-        let mut w = |s: &str| frame.measure(FontKind::Ui, size, s);
+        let mut w = |s: &str| frame.measure(Font::ui(size), s);
         let word = w("hello").max(w("world")) + 0.01;
         let (abcd, ab, ell) = (w("abcd"), w("ab "), w("…"));
 

@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://winc.si"><img alt="Website" src="https://img.shields.io/badge/Website-winc.si-black" /></a>
-  <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/License-Apache%202.0-blue" /></a>
+  <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/License-GPL--3.0--or--later-blue" /></a>
   <img alt="Rust" src="https://img.shields.io/badge/Rust-2024-b7410e" />
   <img alt="Platforms" src="https://img.shields.io/badge/Platforms-macOS%20%7C%20Linux%20%7C%20Windows-555" />
 </p>
@@ -131,7 +131,7 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 cargo xtask bench                   # 测启动、内存、滚动，对照性能预算
 ```
 
-界面由 Rust 编写，窗口用 winit，渲染由 winc 自己的 CPU 光栅化完成；在 macOS 上直接写入 IOSurface。
+界面由 Rust 编写，窗口用 winit，渲染由 [CPUI](https://github.com/DEEIX-AI/cpui) 的渲染层 `cpui-render` 在 CPU 上完成。
 
 代码按 crate 分层：
 
@@ -144,7 +144,6 @@ cargo xtask bench                   # 测启动、内存、滚动，对照性能
 | `winc-backend` | 文件系统的访问入口，区分本机路径与远端主机上的路径 |
 | `winc-server` | 运行在远端主机上的服务进程，经 SSH 为本机执行文件操作 |
 | `winc-watch` | 在文件所在的机器上监视目录（WSL 发行版内、远端主机上） |
-| `winc-render` | 渲染层：字形、光栅化、呈现 |
 | `winc-preview` | 图片、SVG、Markdown、PDF、Word 文档、表格预览 |
 | `winc-typeset` | Markdown 预览的排版 |
 | `winc-pty` | 终端仿真和伪终端的辅助进程 |
@@ -179,4 +178,5 @@ cargo xtask bench                   # 测启动、内存、滚动，对照性能
 
 ## 许可证
 
-winc 以 [Apache License 2.0](LICENSE) 授权，另见 [NOTICE](NOTICE)。
+winc 以 [GNU 通用公共许可证第 3 版](LICENSE)或（由你选择）任何更新的版本授权；0.2.0 之前的版本以
+Apache License 2.0 发布。另见 [NOTICE](NOTICE)。

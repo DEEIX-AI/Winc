@@ -55,7 +55,7 @@ fn a_spilled_full_name_keeps_the_current_repository_background() {
         paint(&mut app);
         paint(&mut app);
         let spill = app.git.commit.overflow.and_then(|o| o.spill).unwrap();
-        let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+        let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
         let pixel = |x: f32| {
             let y = ((row.y + 2.0) * SCALE) as usize;
             image.pixels[y * image.width as usize + (x * SCALE) as usize]
@@ -106,7 +106,7 @@ fn long_names_fade_into_the_current_repository_background() {
                         .find(|(_, h)| *h == CommitTarget::File(index))
                         .unwrap()
                         .0;
-                    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+                    let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
                     let pixel = |x: f32| {
                         let y = ((row.y + 2.0) * SCALE) as usize;
                         image.pixels[y * image.width as usize + (x * SCALE) as usize]
@@ -171,10 +171,7 @@ fn other_repository_names_fade_like_current_names() {
             .flatten()
             .unwrap();
         for scale in [1.25, 2.0] {
-            app.frame.renderer = Some(
-                Renderer::offscreen(SIZE.0, SIZE.1, scale, app.palette.frame_bg, None, None)
-                    .unwrap(),
-            );
+            app.frame.renderer = Some(offscreen(&app, SIZE, scale));
             app.measure_fonts();
             for staging in [false, true] {
                 app.git.commit.set_staging(staging);
@@ -194,7 +191,7 @@ fn other_repository_names_fade_like_current_names() {
                     let current = hit(CommitTarget::File(index));
                     let other = hit(CommitTarget::OtherFile(1, other_index));
                     assert_eq!((current.x, current.w), (other.x, other.w));
-                    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+                    let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
                     let pixel = |row: Rect, x: usize, y: usize| {
                         let y = ((row.y + y as f32) * scale) as usize;
                         image.pixels[y * image.width as usize + (x as f32 * scale) as usize]
@@ -217,7 +214,7 @@ fn other_repository_names_fade_like_current_names() {
                         app.pointer.hover,
                         Hover::Commit(CommitTarget::OtherFile(1, other_index))
                     );
-                    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+                    let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
                     let pixel = |x: f32| {
                         let y = ((other.y + 2.0) * scale) as usize;
                         image.pixels[y * image.width as usize + (x * scale) as usize]

@@ -10,9 +10,9 @@ mod rows;
 use std::path::PathBuf;
 use std::time::Instant;
 
+use cpui_render::Rect;
 use winc_editor::{ProjectSearch, Query};
 use winc_i18n::t;
-use winc_render::Rect;
 use winc_syntax::LineState;
 
 use super::global::SEARCH_DELAY;

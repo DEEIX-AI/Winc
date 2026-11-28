@@ -11,7 +11,7 @@ struct Prepared {
     label: MenuLabel,
     /// 快捷键的按键字符和修饰键位。
     key: (String, usize),
-    icon: Option<Image>,
+    icon: Option<Snapshot>,
     /// 图标的逻辑尺寸（宽，高）。
     icon_size: (f32, f32),
     enabled: bool,
@@ -388,6 +388,10 @@ impl App {
             MenuTarget::BackgroundImage => background_menu(),
             MenuTarget::BackgroundFit => background_fit_menu(),
             MenuTarget::TextWidth => text_width_menu(),
+            MenuTarget::SplitPreviewPosition => [false, true]
+                .into_iter()
+                .map(|left| MenuEntry::Item(MenuCommand::SplitPreviewPosition(left), true))
+                .collect(),
             MenuTarget::DefaultLanguage => document_language_menu(false, &[]),
             MenuTarget::TerminalPosition => terminal_position_menu(),
             MenuTarget::TerminalTabPosition => terminal_tab_position_menu(),
@@ -942,6 +946,7 @@ impl App {
                 | MenuTarget::BackgroundImage
                 | MenuTarget::BackgroundFit
                 | MenuTarget::TextWidth
+                | MenuTarget::SplitPreviewPosition
                 | MenuTarget::DefaultLanguage
                 | MenuTarget::TerminalPosition
                 | MenuTarget::TerminalTabPosition
@@ -968,6 +973,7 @@ impl App {
             MenuTarget::BackgroundImage => Some(Setting::BackgroundImage),
             MenuTarget::BackgroundFit => Some(Setting::BackgroundFit),
             MenuTarget::TextWidth => Some(Setting::TextWidth),
+            MenuTarget::SplitPreviewPosition => Some(Setting::SplitPreviewPosition),
             MenuTarget::DefaultLanguage => Some(Setting::DefaultLanguage),
             MenuTarget::TerminalPosition => Some(Setting::TerminalPosition),
             MenuTarget::TerminalTabPosition => Some(Setting::TerminalTabPosition),
@@ -1303,6 +1309,9 @@ impl App {
             MenuCommand::DefaultShellCustom => self.configured_shell().is_some_and(|configured| {
                 (self.terminal.shells.iter()).all(|shell| shell.command != configured.command)
             }),
+            MenuCommand::SplitPreviewPosition(left) => {
+                (self.config.split_preview_left == Some(true)) == left
+            }
             MenuCommand::TerminalPosition(right) => self.terminal_right() == right,
             MenuCommand::TerminalTabPosition(right) => {
                 (self.config.terminal_vertical_tabs == Some(true)) == right
@@ -1338,7 +1347,7 @@ impl App {
                 };
                 // 字体菜单只看列表中的第一个字体，「后备字体」看其余的字体。
                 let list = winc_config::font_list(self.font_value(*setting).as_deref());
-                let name = |i: usize| winc_render::installed_fonts().get(i).map(|f| &*f.name);
+                let name = |i: usize| cpui_render::installed_fonts().get(i).map(|f| &*f.name);
                 match command {
                     MenuCommand::Font(i) => name(i).is_some_and(|n| list.first() == Some(&n)),
                     MenuCommand::FallbackFont(i) => {

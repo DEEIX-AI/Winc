@@ -8,9 +8,9 @@
 
 use std::time::Duration;
 
+use cpui_render::Rect;
 use winc_config::SmoothCaret;
 use winc_editor::DocumentId;
-use winc_render::Rect;
 
 use super::*;
 

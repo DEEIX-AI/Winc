@@ -7,7 +7,7 @@ mod keys;
 
 use std::borrow::Cow;
 
-use winc_render::{Color, FontKind, Frame, Rect};
+use cpui_render::{Color, Font, Frame, Rect, Stroke};
 
 use super::*;
 use crate::app::DialogCache;
@@ -24,7 +24,7 @@ use winc_i18n::t;
 /// 返回设置浮层的布局：绘制期间渲染器不在 `App` 中，说明文字改用 `frame` 量宽度。
 fn layout(app: &App, frame: &mut Frame<'_>) -> SettingsLayout {
     let size = app.fonts.ui_small;
-    app.settings_layout_with(&mut |text: &str| frame.measure(FontKind::Ui, size, text))
+    app.settings_layout_with(&mut |text: &str| frame.measure(Font::ui(size), text))
 }
 
 /// 绘制设置浮层：遮罩、卡片、分类栏、标题和当前页的内容。
@@ -34,9 +34,9 @@ pub(super) fn draw(app: &mut App, frame: &mut Frame<'_>) {
         // 动画开头：底下的窗口已绘制完成，保存为快照；再绘制一张原大、不透明的卡片并保存，
         // 之后恢复底下的窗口。后续每帧直接用这两张快照（`draw_cached`），不必每帧重绘整个窗口
         // 和整张卡片（在 2× 缩放的屏幕上每帧需要二三十毫秒，动画只有几帧，会明显掉帧）。
-        let base = frame.snapshot(frame.bounds());
+        let base = frame.capture(frame.bounds());
         draw_dialog(app, frame, &layout);
-        let card = frame.snapshot(layout.card);
+        let card = frame.capture(layout.card);
         app.settings.cache = Some(DialogCache { base, card });
         draw_motion(app, frame, &layout);
         return;
@@ -48,7 +48,7 @@ pub(super) fn draw(app: &mut App, frame: &mut Frame<'_>) {
     frame.rect(app.layout.window, p.scrim_strong);
     // 开始滚动或拖动时保存已绘制的窗口和遮罩，期间不再重绘（`draw_scrolling`）。
     if app.settings.scrolled_at.is_some() && app.settings.scroll_base.is_none() {
-        app.settings.scroll_base = Some(frame.snapshot(frame.bounds()));
+        app.settings.scroll_base = Some(frame.capture(frame.bounds()));
     }
     super::draw_card_frame(frame, p, layout.card, RADIUS_CARD);
     draw_dialog(app, frame, &layout);
@@ -65,10 +65,8 @@ pub(crate) fn draw_scrolling(app: &mut App, frame: &mut Frame<'_>) -> bool {
         return false;
     };
     // `tint` 全透明时 `restore_tinted` 原样恢复快照。
-    frame.restore_tinted(&base, app.palette.scrim_strong.alpha(0.0));
+    frame.restore(&base, app.palette.scrim_strong.alpha(0.0));
     app.settings.scroll_base = Some(base);
-    // 与完整绘制时相同，卡片不透出背景图。
-    frame.end_wallpaper();
     let layout = layout(app, frame);
     super::draw_card_frame(frame, app.palette, layout.card, RADIUS_CARD);
     draw_dialog(app, frame, &layout);
@@ -106,9 +104,7 @@ fn draw_motion(app: &App, frame: &mut Frame<'_>, layout: &SettingsLayout) {
         return;
     };
     // 卡片半透明时，透过卡片看到的下层也该压暗：遮罩铺满整个窗口。
-    frame.with_opacity(curve.0, |frame| {
-        frame.restore_tinted(&cache.base, p.scrim_strong)
-    });
+    frame.with_opacity(curve.0, |frame| frame.restore(&cache.base, p.scrim_strong));
     super::blend_card(frame, p, (layout.card, &cache.card), RADIUS_CARD, curve);
 }
 
@@ -117,9 +113,9 @@ fn draw_dialog(app: &mut App, frame: &mut Frame<'_>, layout: &SettingsLayout) {
     let p = app.palette;
 
     // 分为两栏：左侧用分组的底色，右侧用编辑区底色，中间不绘制分隔线。阴影和细边另行绘制。
-    frame.rounded(layout.card, p.editor_bg, RADIUS_CARD);
+    frame.rounded(layout.card, RADIUS_CARD, p.editor_bg);
     let r = RADIUS_CARD;
-    frame.rect_corners(layout.nav, p.group_bg, [r, 0.0, 0.0, r], layout.card);
+    frame.rect_corners(layout.nav, [r, 0.0, 0.0, r], p.group_bg, layout.card);
 
     let search_caret = draw_search(app, frame, layout);
     draw_nav(app, frame, layout);
@@ -147,9 +143,9 @@ fn draw_search(app: &mut App, frame: &mut Frame<'_>, layout: &SettingsLayout) ->
     let search = layout.search;
     let focused = app.focus == Focus::SettingsSearch;
     if focused {
-        frame.rounded(search.inset(-1.5, -1.5), p.accent, RADIUS_ROW + 1.5);
+        frame.rounded(search.inset(-1.5, -1.5), RADIUS_ROW + 1.5, p.accent);
     }
-    frame.rounded(search, p.editor_bg, RADIUS_ROW);
+    frame.rounded(search, RADIUS_ROW, p.editor_bg);
     if !focused {
         keys::outline(frame, p.border, search);
     }
@@ -200,9 +196,9 @@ fn draw_nav_row(
     let hovered = app.settings.hover == Some(SettingsPart::Page(page));
     // 当前页铺一层不带色相的底色，悬停的项铺淡底色。
     if current {
-        frame.rect_clipped(row, p.selected_inactive, RADIUS_TAB, layout.nav);
+        frame.rect_clipped(row, RADIUS_TAB, p.selected_inactive, layout.nav);
     } else if hovered {
-        frame.rect_clipped(row, p.hover, RADIUS_TAB, layout.nav);
+        frame.rect_clipped(row, RADIUS_TAB, p.hover, layout.nav);
     }
 
     let icon = (full.x + 16.0, full.y + full.h / 2.0);
@@ -277,10 +273,10 @@ fn draw_body(app: &mut App, frame: &mut Frame<'_>, layout: &SettingsLayout) -> O
         ui_text_small(frame, app, rect.x, rect, title, p.text_dim, body);
     }
     for &group in &layout.groups {
-        frame.rect_clipped(group, p.group_bg, RADIUS_CARD, body);
+        frame.rect_clipped(group, RADIUS_CARD, p.group_bg, body);
     }
     for &line in &layout.separators {
-        frame.rect_clipped(line, p.separator, 0.0, body);
+        frame.rect_clipped(line, 0.0, p.separator, body);
     }
 
     let mut caret = None;
@@ -289,6 +285,16 @@ fn draw_body(app: &mut App, frame: &mut Frame<'_>, layout: &SettingsLayout) -> O
             continue;
         }
         caret = caret.or(draw_row(app, frame, row, body));
+    }
+
+    // 「关于」页最下方的版权与许可声明：小号淡色，居中；放不下时在末尾截短。
+    if let Some(line) = layout.footer {
+        let size = app.fonts.ui_small;
+        let text = crate::layout::legal_line();
+        let text = ellipsize(frame, &text, size, line.w);
+        let w = frame.measure(Font::ui(size), &text);
+        let x = (line.x + (line.w - w) / 2.0).round();
+        ui_text_small(frame, app, x, line, &text, p.text_dim, body);
     }
 
     // 窗口太矮、内容放不下时，右侧有一条细滚动条，滚动时或鼠标移到右边缘时显示。
@@ -302,7 +308,7 @@ fn draw_body(app: &mut App, frame: &mut Frame<'_>, layout: &SettingsLayout) -> O
     );
     if let Some(thumb) = thumb {
         let color = look.color(p.scrollbar, p.scrollbar_active);
-        frame.rounded(thumb, color, 2.0);
+        frame.rounded(thumb, 2.0, color);
     }
 
     caret
@@ -325,13 +331,13 @@ fn draw_row(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect) 
         } else {
             p.hover
         };
-        frame.rect_clipped(row.row, color, RADIUS_ROW, clip);
+        frame.rect_clipped(row.row, RADIUS_ROW, color, clip);
     } else if selected {
         // 内缩 4 逻辑像素，使圆角在组的底色上清晰可见。
         frame.rect_clipped(
             row.row.inset(4.0, 4.0),
-            p.selected_inactive,
             RADIUS_ROW,
+            p.selected_inactive,
             clip,
         );
     }
@@ -390,7 +396,7 @@ fn draw_row(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect) 
                 setting => {
                     let text = setting.description().unwrap_or_default();
                     let size = app.fonts.ui_small;
-                    let mut measure = |s: &str| frame.measure(FontKind::Ui, size, s);
+                    let mut measure = |s: &str| frame.measure(Font::ui(size), s);
                     let lines =
                         crate::layout::description_lines(setting, &text, room, &mut measure);
                     let last = lines.len().saturating_sub(1);
@@ -413,7 +419,7 @@ fn draw_row(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect) 
             if let Some(error) = error {
                 let room = (row.control.x - 12.0 - end - 16.0).max(0.0);
                 let error = ellipsize(frame, &error, app.fonts.ui_small, room);
-                let w = frame.measure(FontKind::Ui, app.fonts.ui_small, &error);
+                let w = frame.measure(Font::ui(app.fonts.ui_small), &error);
                 let at = row.control.x - 12.0 - w;
                 ui_text_small(frame, app, at, row.row, &error, p.error, clip);
             }
@@ -538,11 +544,11 @@ fn draw_reset(
 fn draw_link(app: &App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect) {
     let p = app.palette;
     let text = crate::layout::about_value(row.setting).unwrap_or_default();
-    let text_w = frame.measure(FontKind::Ui, app.fonts.ui, &text);
+    let text_w = frame.measure(Font::ui(app.fonts.ui), &text);
     let icon_w = crate::layout::LINK_ICON_W;
     let area = crate::layout::value_area(row.control, text_w + icon_w);
     if app.settings.hover == Some(SettingsPart::Link(row.setting)) {
-        frame.rect_clipped(area, p.hover, RADIUS_ROW, clip);
+        frame.rect_clipped(area, RADIUS_ROW, p.hover, clip);
     }
     let right = area.right() - SETTINGS_GLYPH_PAD;
     let center = (right - 4.5, area.y + area.h / 2.0);
@@ -586,15 +592,15 @@ fn draw_product(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Re
     // 名称比界面文字大 7 点，随界面字号一同缩放。
     let name_size = app.fonts.ui + 7.0;
     let name = crate::layout::PRODUCT_NAME;
-    let w = frame.measure(FontKind::Ui, name_size, name);
+    let w = frame.measure(Font::ui(name_size), name);
     let x = (parts.name.x + (parts.name.w - w) / 2.0).round();
     label(frame, app, name_size, (x, parts.name), name, p.text, clip);
 
     let text = crate::layout::version_line();
-    let w = frame.measure(FontKind::Ui, app.fonts.ui, &text);
+    let w = frame.measure(Font::ui(app.fonts.ui), &text);
     let area = parts.version_area(w);
     if app.settings.hover == Some(SettingsPart::Copy(row.setting)) {
-        frame.rect_clipped(area, p.hover, RADIUS_ROW, clip);
+        frame.rect_clipped(area, RADIUS_ROW, p.hover, clip);
     }
     let x = (area.x + (area.w - w) / 2.0).round();
     ui_text(frame, app, x, area, &text, p.text_muted, clip);
@@ -683,12 +689,12 @@ fn draw_tool_detail(app: &mut App, frame: &mut Frame<'_>, setting: Setting, line
     let link_w = if row.install.is_empty() {
         0.0
     } else {
-        GAP + frame.measure(FontKind::Ui, size, link)
+        GAP + frame.measure(Font::ui(size), link)
     };
     let warning_w = row
         .warning
         .as_ref()
-        .map_or(0.0, |w| GAP + 16.0 + frame.measure(FontKind::Ui, size, w));
+        .map_or(0.0, |w| GAP + 16.0 + frame.measure(Font::ui(size), w));
     let room = (line.w - warning_w - link_w).max(0.0);
     let detail = ellipsize(frame, &row.detail, size, room);
     let mut x = ui_text_small(frame, app, line.x, line, &detail, p.text_muted, line);
@@ -705,7 +711,7 @@ fn draw_tool_detail(app: &mut App, frame: &mut Frame<'_>, setting: Setting, line
         let hit = Rect::new(x - 2.0, line.y, end - x + 4.0, line.h);
         if app.settings.hover == Some(SettingsPart::Install(setting)) {
             let underline = Rect::new(x, (line.bottom() - 4.0).round(), end - x, 1.0);
-            frame.rect_clipped(underline, p.accent, 0.0, line);
+            frame.rect_clipped(underline, 0.0, p.accent, line);
         }
         app.hits.install_links.push((setting, hit));
     }
@@ -784,8 +790,8 @@ fn draw_field(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect
         } else {
             p.accent
         };
-        frame.rect_clipped(rect.inset(-1.5, -1.5), ring, RADIUS_ROW + 1.5, clip);
-        frame.rect_clipped(rect, p.editor_bg, RADIUS_ROW, clip);
+        frame.rect_clipped(rect.inset(-1.5, -1.5), RADIUS_ROW + 1.5, ring, clip);
+        frame.rect_clipped(rect, RADIUS_ROW, p.editor_bg, clip);
 
         let focused = app.focus == Focus::Setting;
         let (setting, mut field) = app.settings.editing.take().expect("刚刚判断过在编辑");
@@ -793,14 +799,14 @@ fn draw_field(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect
         app.settings.editing = Some((setting, field));
         if on_menu {
             let button = crate::layout::font_menu_button(rect);
-            frame.rect_clipped(button, p.hover, RADIUS_ROW, clip);
+            frame.rect_clipped(button, RADIUS_ROW, p.hover, clip);
         }
         draw_arrows(app, frame);
         return caret;
     }
 
     if hovered {
-        frame.rect_clipped(rect, p.hover, RADIUS_ROW, clip);
+        frame.rect_clipped(rect, RADIUS_ROW, p.hover, clip);
     }
 
     // 未设置时显示的「系统默认」「跟随编辑器」是菜单中的一项，与其他取值同色。
@@ -819,7 +825,7 @@ fn draw_field(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect
         Some((first, _)) => (*first, String::new()),
         None => (text.as_ref(), String::new()),
     };
-    let more_w = frame.measure(FontKind::Ui, size, &more);
+    let more_w = frame.measure(Font::ui(size), &more);
     let room = (area.w - more_w).max(0.0);
     let path = main.contains(['/', '\\']);
     let main = if font && !path {
@@ -827,7 +833,7 @@ fn draw_field(app: &mut App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect
     } else {
         ellipsize(frame, main, size, room)
     };
-    let w = frame.measure(FontKind::Ui, size, &main) + more_w;
+    let w = frame.measure(Font::ui(size), &main) + more_w;
     // 没有下拉按钮时文字的右缘与组内分隔线的右端对齐。
     let (right, area) = if font {
         (area.right(), area)
@@ -885,7 +891,7 @@ fn draw_stepper(app: &App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect) 
         }
     }
 
-    let w = frame.measure(FontKind::Ui, app.fonts.ui, &value);
+    let w = frame.measure(Font::ui(app.fonts.ui), &value);
     let x = (parts.value.x + (parts.value.w - w) / 2.0).round();
     caps_label(
         frame,
@@ -926,14 +932,14 @@ fn draw_mode(app: &App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rect) {
         let selected = app.theme_choice == choice;
         let hovered = app.settings.hover == Some(SettingsPart::Theme(choice));
         if hovered && !selected {
-            frame.rect_clipped(segment, p.hover, RADIUS_ROW, clip);
+            frame.rect_clipped(segment, RADIUS_ROW, p.hover, clip);
         }
         let color = if selected || hovered {
             p.text
         } else {
             p.text_muted
         };
-        let w = frame.measure(FontKind::Ui, app.fonts.ui_small, label);
+        let w = frame.measure(Font::ui(app.fonts.ui_small), label);
         let x = (segment.x + (segment.w - w) / 2.0).round();
         ui_text_small(frame, app, x, segment, label, color, clip);
     }
@@ -959,11 +965,11 @@ fn draw_theme_grid(app: &App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rec
             None
         };
         if let Some(ring) = ring {
-            frame.rect_clipped(thumb.inset(-2.5, -2.5), ring, THUMB_RADIUS + 2.5, clip);
+            frame.rect_clipped(thumb.inset(-2.5, -2.5), THUMB_RADIUS + 2.5, ring, clip);
             frame.rect_clipped(
                 thumb.inset(-1.0, -1.0),
-                p.group_bg,
                 THUMB_RADIUS + 1.0,
+                p.group_bg,
                 clip,
             );
         }
@@ -973,7 +979,7 @@ fn draw_theme_grid(app: &App, frame: &mut Frame<'_>, row: &SettingRow, clip: Rec
 
         let name = Rect::new(tile.x, thumb.bottom() + 4.0, tile.w, tile.h - thumb.h - 4.0);
         let color = if selected { p.text } else { p.text_muted };
-        let w = frame.measure(FontKind::Ui, app.fonts.ui_small, theme.name());
+        let w = frame.measure(Font::ui(app.fonts.ui_small), theme.name());
         let x = (name.x + (name.w - w) / 2.0).round();
         ui_text_small(frame, app, x, name, theme.name(), color, clip);
     }
@@ -994,10 +1000,10 @@ fn mini_window(frame: &mut Frame<'_>, p: &Palette, rect: Rect, clip: Rect) {
     let pad = (4.0 * unit).round();
     let radius = 3.0 * unit;
     let line = |frame: &mut Frame<'_>, x: f32, y: f32, w: f32, color: Color| {
-        frame.rect_clipped(Rect::new(x, y, w, bar), color, bar / 2.0, clip);
+        frame.rect_clipped(Rect::new(x, y, w, bar), bar / 2.0, color, clip);
     };
 
-    frame.rect_clipped(rect, p.frame_bg, THUMB_RADIUS, clip);
+    frame.rect_clipped(rect, THUMB_RADIUS, p.frame_bg, clip);
     let top = (8.0 * unit).round();
     let inner = Rect::new(
         rect.x + pad,
@@ -1013,8 +1019,8 @@ fn mini_window(frame: &mut Frame<'_>, p: &Palette, rect: Rect, clip: Rect) {
         inner.right() - side.right() - pad,
         inner.h,
     );
-    frame.rect_clipped(side, p.sidebar_bg, radius, clip);
-    frame.rect_clipped(editor, p.editor_bg, radius, clip);
+    frame.rect_clipped(side, radius, p.sidebar_bg, clip);
+    frame.rect_clipped(editor, radius, p.editor_bg, clip);
 
     // 窗框顶上左边三个小圆点（窗口按钮的位置），用最淡的字色。
     for i in 0..3 {
@@ -1025,7 +1031,7 @@ fn mini_window(frame: &mut Frame<'_>, p: &Palette, rect: Rect, clip: Rect) {
             d,
             d,
         );
-        frame.rect_clipped(dot, p.text_dim.alpha(0.6), d / 2.0, clip);
+        frame.rect_clipped(dot, d / 2.0, p.text_dim.alpha(0.6), clip);
     }
 
     // 文件树：第三行是选中的行，一行是改动的文件（Git 的修改色）。
@@ -1041,7 +1047,7 @@ fn mini_window(frame: &mut Frame<'_>, p: &Palette, rect: Rect, clip: Rect) {
         let y = side.y + 5.0 * unit + i as f32 * pitch;
         if i == 2 {
             let back = Rect::new(side.x + 2.0, y - 2.0 * unit, side.w - 4.0, bar + 4.0 * unit);
-            frame.rect_clipped(back, p.selected, 1.5 * unit, clip);
+            frame.rect_clipped(back, 1.5 * unit, p.selected, clip);
         }
         let indent = if i == 0 { 0.0 } else { 3.0 * unit };
         line(
@@ -1060,8 +1066,8 @@ fn mini_window(frame: &mut Frame<'_>, p: &Palette, rect: Rect, clip: Rect) {
         (editor.w * 0.34).round(),
         7.0 * unit,
     );
-    frame.rect_clipped(tab, p.tab_edge, 2.0 * unit, clip);
-    frame.rect_clipped(tab.inset(0.5, 0.5), p.tab_fill, 2.0 * unit, clip);
+    frame.rect_clipped(tab, 2.0 * unit, p.tab_edge, clip);
+    frame.rect_clipped(tab.inset(0.5, 0.5), 2.0 * unit, p.tab_fill, clip);
     line(
         frame,
         tab.x + 3.0 * unit,
@@ -1100,12 +1106,12 @@ fn mini_window(frame: &mut Frame<'_>, p: &Palette, rect: Rect, clip: Rect) {
         let y = tab.bottom() + 5.0 * unit + i as f32 * pitch;
         let band = Rect::new(editor.x, y - 2.0 * unit, editor.w, bar + 4.0 * unit);
         let number = if i == 2 {
-            frame.rect_clipped(band, p.current_line, 0.0, clip);
+            frame.rect_clipped(band, 0.0, p.current_line, clip);
             p.gutter_text_current
         } else if i == 4 {
-            frame.rect_clipped(band, p.diff_added.line, 0.0, clip);
+            frame.rect_clipped(band, 0.0, p.diff_added.line, clip);
             let mark = Rect::new(gutter + 4.0 * unit, band.y, 1.0 * unit, band.h);
-            frame.rect_clipped(mark, p.diff_added.mark, 0.0, clip);
+            frame.rect_clipped(mark, 0.0, p.diff_added.mark, clip);
             p.gutter_text
         } else {
             p.gutter_text
@@ -1125,7 +1131,7 @@ fn mini_window(frame: &mut Frame<'_>, p: &Palette, rect: Rect, clip: Rect) {
 /// 矩形内部已经绘制了内容，不能先铺边色再铺底色，因此用四条直线和四段圆弧描边。
 fn outline(frame: &mut Frame<'_>, color: Color, rect: Rect, radius: f32, clip: Rect) {
     let inner = rect.inset(0.5, 0.5);
-    let shapes = icons::rounded_outline(inner.x, inner.y, inner.w, inner.h, radius - 0.5);
+    let shapes = Stroke::rounded_rect(Rect::new(inner.x, inner.y, inner.w, inner.h), radius - 0.5);
     frame.stroke(&shapes, 1.0, color, clip);
 }
 

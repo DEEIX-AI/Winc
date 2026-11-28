@@ -5,8 +5,8 @@
 
 use std::f32::consts::{FRAC_PI_2, TAU};
 
+use cpui_render::{Color, Rect, Stroke};
 use winc_preview::markdown::mermaid::Pie;
-use winc_render::{Color, Rect, Stroke};
 
 use super::super::{Cx, Item};
 use super::{Look, bounds, ellipse, palette};

@@ -2,8 +2,8 @@
 //!
 //! 间距和几何量的单位与 `math` 模块相同（逻辑像素，间距按字号的 1/18 计）。
 
+use cpui_render::{Color, Stroke};
 use winc_preview::markdown::math::{Class, Font, Node};
-use winc_render::{Color, Stroke};
 
 /// 返回类别 `left` 后面接 `right` 时中间留多少（单位是字号的 1/18）。
 ///

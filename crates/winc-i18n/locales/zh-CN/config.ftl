@@ -41,6 +41,7 @@ config-vim-leader-invalid = { $name } 应为一个按键的记法，已忽略
 config-vim-keys-invalid = { $name } 应为映射的数组，各项含 mode（normal、visual、insert 或 operator）、keys 与 to，已忽略
 config-background-fit-invalid = { $name } 的值只能是 fill、fit、stretch 或 tile，已忽略
 config-text-width-invalid = { $name } 的值只能是 standard、wide 或 full，已忽略
+config-split-preview-position-invalid = { $name } 的值只能是 right 或 left，已忽略
 config-language-invalid = { $name } 的值只能是 auto、zh-CN 或 en-US，已忽略
 config-not-integer = { $name } 应为整数（当前为 { $value }），已忽略
 config-not-string = { $name } 应为字符串，已忽略

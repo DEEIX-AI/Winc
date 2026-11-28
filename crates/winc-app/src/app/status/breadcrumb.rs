@@ -3,9 +3,9 @@
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
+use cpui_render::{Color, Snapshot};
 use winc_editor::{EntryKind, keypath, list_dir};
 use winc_i18n::t;
-use winc_render::{Color, Image};
 
 use crate::icons;
 
@@ -38,8 +38,8 @@ struct FolderIcons {
     dark: bool,
     /// 目录图标的颜色。
     folder_color: Color,
-    folder: Image,
-    files: Vec<(icons::FileGlyph, Image)>,
+    folder: Snapshot,
+    files: Vec<(icons::FileGlyph, Snapshot)>,
 }
 
 thread_local! {
@@ -49,7 +49,7 @@ thread_local! {
 
 /// 把白色画的 `image`（预乘的 ARGB）染成 `color`。
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-fn tint(image: &Image, color: Color) -> Image {
+fn tint(image: &Snapshot, color: Color) -> Snapshot {
     let channel = |c: f32, a: u32| ((c.clamp(0.0, 1.0) * a as f32).round() as u32).min(a);
     let pixels = image
         .pixels
@@ -59,7 +59,7 @@ fn tint(image: &Image, color: Color) -> Image {
             (a << 24) | channel(color.r, a) << 16 | channel(color.g, a) << 8 | channel(color.b, a)
         })
         .collect();
-    Image {
+    Snapshot {
         pixels,
         width: image.width,
         height: image.height,
@@ -68,7 +68,7 @@ fn tint(image: &Image, color: Color) -> Image {
 
 /// 目录菜单里 `name` 这一项的图标；菜单没有画好图标时为 `None`。
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-fn folder_icon(name: &str, is_dir: bool) -> Option<Image> {
+fn folder_icon(name: &str, is_dir: bool) -> Option<Snapshot> {
     FOLDER_ICONS.with_borrow(|icons| {
         let icons = icons.as_ref()?;
         if is_dir {

@@ -9,7 +9,7 @@ impl App {
     /// 正文里的回车、⇧ 回车见 [`App::live_enter`]。
     ///
     /// 其余的键返回 `false`，交给编辑区按普通编辑处理（输入、删除、←→、⌘↑↓ 等都作用于文档）。
-    pub(super) fn live_key(&mut self, key: &Key, cmd: bool, area: winc_render::Rect) -> bool {
+    pub(super) fn live_key(&mut self, key: &Key, cmd: bool, area: cpui_render::Rect) -> bool {
         self.parse_markdown_inline();
         // macOS 上 ⌘← / ⌘→ 与 Home / End 相同，移到显示行的开头、末尾。
         if cfg!(target_os = "macos") && cmd && !self.pointer.modifiers.alt_key() {

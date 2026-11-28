@@ -7,6 +7,7 @@
 //! 文字的一侧。折叠的一段同样用带子连接。
 
 mod blame;
+mod code_fold;
 pub(super) mod combined;
 mod files;
 mod sticky;
@@ -92,13 +93,13 @@ fn draw_fade(
         if y1 > y0 {
             frame.rect_clipped(
                 Rect::new(pane.x, y0, pane.w, y1 - y0),
-                shade.line,
                 0.0,
+                shade.line,
                 parts.body,
             );
         } else {
             let line = Rect::new(pane.x, y0 - 0.5, pane.w, 1.0);
-            frame.rect_clipped(line, shade.edge, 0.0, parts.body);
+            frame.rect_clipped(line, 0.0, shade.edge, parts.body);
         }
     }
     draw_ribbon(frame, parts.ribbon, spans[0], spans[1], shade, parts.body);
@@ -119,15 +120,15 @@ fn draw_hunk_focus(app: &App, frame: &mut Frame<'_>, pane: Rect, (y0, y1): (f32,
             let band = Rect::new(pane.x, y0, pane.w, y1 - y0);
             frame.rect_clipped(
                 band,
-                accent.alpha(PULSE_ALPHA * pulse.fade_out()),
                 0.0,
+                accent.alpha(PULSE_ALPHA * pulse.fade_out()),
                 clip,
             );
         }
-        frame.rect_clipped(Rect::new(pane.x, y0, MARK, y1 - y0), accent, 0.0, clip);
+        frame.rect_clipped(Rect::new(pane.x, y0, MARK, y1 - y0), 0.0, accent, clip);
     } else {
         let line = Rect::new(pane.x, y0 - MARK / 2.0, pane.w, MARK);
-        frame.rect_clipped(line, accent, 0.0, clip);
+        frame.rect_clipped(line, 0.0, accent, clip);
     }
 }
 
@@ -242,7 +243,7 @@ fn draw_banner(
     };
     let p = app.palette;
     let bar = parts.banner;
-    frame.rect(bar, p.sidebar_bg);
+    frame.surface(bar, p.sidebar_bg);
     frame.rect(
         Rect::new(bar.x, bar.bottom() - 1.0, bar.w, 1.0),
         p.separator,
@@ -254,7 +255,7 @@ fn draw_banner(
 
     // 右端是「返回日志」。
     let back_text = t!("git-log-diff-back");
-    let back_w = frame.measure(FontKind::Ui, size, back_text) + 30.0;
+    let back_w = frame.measure(Font::ui(size), back_text) + 30.0;
     let back = Rect::new(bar.right() - 10.0 - back_w, y, back_w, BUTTON);
     let lit = |target| app.pointer.hover == Hover::Diff(target);
     draw_button(frame, p, back, bar, lit(DiffTarget::BannerBack), false);
@@ -272,10 +273,8 @@ fn draw_banner(
         back,
     );
     frame.text(
-        FontKind::Ui,
-        size,
-        back.x + 20.0,
-        baseline,
+        Font::ui(size),
+        (back.x + 20.0, baseline),
         back_text,
         ink,
         back,
@@ -297,24 +296,14 @@ fn draw_banner(
     icons::history(frame, (x + 6.0, bar.y + bar.h / 2.0), p.text_muted, clip);
     let x = x + 20.0;
     let version = &banner.version;
-    let end = frame.text(
-        FontKind::Mono,
-        size,
-        x,
-        baseline,
-        version,
-        p.text_muted,
-        clip,
-    );
+    let end = frame.text(Font::mono(size), (x, baseline), version, p.text_muted, clip);
     let mut x = end + 10.0;
     if !banner.subject.is_empty() {
         let room = (clip.right() - x).max(0.0);
         let subject = ellipsize(frame, &banner.subject, app.fonts.ui, room);
         x = frame.text(
-            FontKind::Ui,
-            app.fonts.ui,
-            x,
-            baseline,
+            Font::ui(app.fonts.ui),
+            (x, baseline),
             &subject,
             p.text,
             clip,
@@ -323,7 +312,7 @@ fn draw_banner(
     if !banner.detail.is_empty() {
         let room = (clip.right() - x).max(0.0);
         let detail = ellipsize(frame, &banner.detail, size, room);
-        frame.text(FontKind::Ui, size, x, baseline, &detail, p.text_dim, clip);
+        frame.text(Font::ui(size), (x, baseline), &detail, p.text_dim, clip);
     }
 }
 
@@ -341,7 +330,7 @@ fn draw_header(
 ) {
     let p = app.palette;
     let header = parts.header;
-    frame.rect(header, p.editor_bg);
+    frame.surface(header, p.editor_bg);
     frame.rect(
         Rect::new(header.x, header.bottom() - 1.0, header.w, 1.0),
         p.separator,
@@ -406,7 +395,7 @@ fn draw_header(
     right -= 10.0;
     if view.is_identical() {
         let text = t!("editor-diff-identical");
-        let w = frame.measure(FontKind::Ui, app.fonts.ui_small, text);
+        let w = frame.measure(Font::ui(app.fonts.ui_small), text);
         right -= w;
         ui_text_small(frame, app, right, header, text, p.text_muted, header);
     } else {
@@ -418,7 +407,7 @@ fn draw_header(
             (format!("{} / {}", at + 1, view.hunks.len()), p.text_muted),
         ];
         for (text, color) in &parts_text {
-            let w = frame.measure(FontKind::Ui, app.fonts.ui_small, text);
+            let w = frame.measure(Font::ui(app.fonts.ui_small), text);
             right -= w;
             ui_text_small(frame, app, right, header, text, *color, header);
             right -= 8.0;
@@ -736,10 +725,8 @@ fn draw_line_number(
     let x = pane.number_end - number.chars().count() as f32 * app.metrics.cell;
     let p = app.palette;
     frame.text(
-        FontKind::Mono,
-        app.fonts.code,
-        x,
-        baseline,
+        Font::mono(app.fonts.code),
+        (x, baseline),
         number,
         p.gutter_text,
         pane.gutter,
@@ -764,6 +751,7 @@ fn draw_body(
     let body = parts.body;
     let (ascent, descent) = (app.metrics.mono.ascent, app.metrics.mono.descent);
     let tab_width = app.editor.tab_width;
+    let brace = code_fold::matching_brace(view, edit);
     // 光标只在编辑区有焦点时绘制。
     let carets_shown = edit.editing && app.focus == Focus::Editor;
     // Vim 模式的光标所在的一侧不画竖线光标；空心的光标在编辑区没有焦点时仍然绘制。
@@ -797,6 +785,7 @@ fn draw_body(
         (unified || aligned).then(|| body.y + (view.hunk_pos(h) - pos) as f32 * lh - lift)
     };
     let drawn = drawn_rows(view, body, (scroll, shift), pos, lh);
+    let foldable = code_fold::foldable_lines(app, view, parts, &drawn);
     // 各段改动的暂存状态；文件不在提交视图里、只能按文件暂存时为空，不绘制任何勾选框。
     let kind = app.active_diff_kind();
     let inclusions: Vec<Pick> = (app.diff_entry(view)).map_or_else(Vec::new, |entry| {
@@ -838,7 +827,7 @@ fn draw_body(
                 } else {
                     p.hover.alpha(p.hover.a * 0.6)
                 };
-                frame.rect_clipped(band, fill, 0.0, body);
+                frame.rect_clipped(band, 0.0, fill, body);
                 let icon = (pane.number_end - app.metrics.cell / 2.0, y + lh / 2.0);
                 let color = if hovered { p.text_muted } else { p.text_dim };
                 icons::up_down(frame, icon, color, pane.gutter);
@@ -883,7 +872,7 @@ fn draw_body(
             } else {
                 shade.line
             };
-            frame.rect_clipped(band, fill, 0.0, body);
+            frame.rect_clipped(band, 0.0, fill, body);
             // 单栏时行勾选框显示在加减号的位置。
             let line_check = hunk
                 .and_then(|h| inclusions.get(h))
@@ -894,10 +883,8 @@ fn draw_body(
             if unified && part == 0 && !line_check {
                 let sign = if side == LEFT { "−" } else { "+" };
                 frame.text(
-                    FontKind::Mono,
-                    app.fonts.code,
-                    parts.checks.right(),
-                    baseline,
+                    Font::mono(app.fonts.code),
+                    (parts.checks.right(), baseline),
                     sign,
                     p.gutter_text,
                     band,
@@ -910,6 +897,9 @@ fn draw_body(
                 draw_line_number(app, frame, &parts.panes[LEFT], line, baseline, &mut number);
             }
             draw_line_number(app, frame, &pane, line, baseline, &mut number);
+
+            let fold = (side, line, foldable[side].binary_search(&line).is_ok());
+            code_fold::draw_arrow(app, frame, view, (&pane, body), fold, y, hits);
         }
         // 已展开的未改动段：在重新折叠后第一个隐藏的行上绘制收起标记，位于右侧行号左边的留白
         // 中；悬停时颜色加深，点击后重新折叠该段。
@@ -954,6 +944,7 @@ fn draw_body(
         } else {
             &mut view.new
         };
+        let line_start = text_side.text.line_to_char(line);
         if loaded != Some((side, line)) {
             loaded = Some((side, line));
             line_chars(text_side, line, &mut chars);
@@ -1018,7 +1009,7 @@ fn draw_body(
                 let x0 = origin_x + at(from) * app.metrics.cell;
                 let x1 = origin_x + at(to) * app.metrics.cell;
                 let rect = Rect::new(x0, y + 2.0, (x1 - x0).max(2.0), lh - 4.0);
-                frame.rect_clipped(rect, word, 3.0, pane.text);
+                frame.rect_clipped(rect, 3.0, word, pane.text);
             }
         }
 
@@ -1044,7 +1035,7 @@ fn draw_body(
                     p.search_match
                 };
                 let rect = Rect::new(x0, y + 1.0, (x1 - x0).max(2.0), lh - 2.0);
-                frame.rect_clipped(rect, color, 3.0, pane.text);
+                frame.rect_clipped(rect, 3.0, color, pane.text);
             }
         }
 
@@ -1070,7 +1061,7 @@ fn draw_body(
                 };
             if x1 > x0 {
                 let rect = Rect::new(x0, y, x1 - x0, lh);
-                frame.rect_clipped(rect, p.selection, 0.0, pane.text);
+                frame.rect_clipped(rect, 0.0, p.selection, pane.text);
             }
         }
 
@@ -1090,7 +1081,21 @@ fn draw_body(
             let x0 = origin_x + at(from) * app.metrics.cell;
             let x1 = origin_x + at(to) * app.metrics.cell;
             let rect = Rect::new(x0, y + 1.0, (x1 - x0).max(2.0), lh - 2.0);
-            frame.rect_clipped(rect, color, 3.0, pane.text);
+            frame.rect_clipped(rect, 3.0, color, pane.text);
+        }
+
+        // 光标旁的括号和配对括号使用与普通编辑器相同的底色。
+        for pos in brace
+            .filter(|(brace_side, _)| *brace_side == side)
+            .into_iter()
+            .flat_map(|(_, (a, b))| [a, b])
+        {
+            let col = pos.saturating_sub(line_start);
+            if pos >= line_start && col < chars.len() && range.contains(&col) {
+                let x = origin_x + at(col) * app.metrics.cell;
+                let rect = Rect::new(x, y + 1.0, app.metrics.cell, lh - 2.0);
+                frame.rect_clipped(rect, 3.0, p.match_brace, pane.text);
+            }
         }
 
         // 整行从行首绘制（制表符的宽度取决于其在行内的位置），只显示本段的范围。
@@ -1125,7 +1130,7 @@ fn draw_body(
             }
         }
 
-        draw_glyphs(
+        let cells = draw_glyphs(
             app,
             frame,
             &chars,
@@ -1136,12 +1141,18 @@ fn draw_body(
             clip,
         );
 
+        if last && view.collapsed_code_fold(side, line).is_some() {
+            let x = (origin_x + (cells + 1) as f32 * app.metrics.cell).round();
+            code_fold::draw_ellipsis(app, frame, (side, line), (x, y), pane.text, hits);
+        }
+
         // 光标处字符的位置与宽度；行尾与空行上的光标占一格。
         let place = |col: usize| {
             let width = Some((at(col + 1) - at(col)) * app.metrics.cell).filter(|w| *w > 0.0);
             let x = origin_x + at(col) * app.metrics.cell;
             (x, y, width.unwrap_or(app.metrics.cell))
         };
+
         // 其余光标与主光标同步闪烁；输入法组字只显示在主光标处，候选窗同样跟随主光标。
         if side == RIGHT && carets_shown {
             let skip = edit.carets.partition_point(|c| c.0 < line);
@@ -1221,7 +1232,7 @@ fn draw_body(
     {
         let note = t!("editor-diff-empty-file");
         let text = parts.panes[side].text;
-        let w = frame.measure(FontKind::Ui, app.fonts.ui_small, note);
+        let w = frame.measure(Font::ui(app.fonts.ui_small), note);
         let row = Rect::new(text.x, body.y + 2.0 * lh, text.w, lh);
         let x = text.x + ((text.w - w) / 2.0).max(DIFF_TEXT_PAD);
         ui_text_small(frame, app, x, row, note, p.text_dim, text);
@@ -1279,11 +1290,11 @@ fn draw_body(
             if !unified && aligned && y1 < end {
                 let pane = parts.panes[side];
                 let pad = Rect::new(pane.rect.x, y1, pane.rect.w, end - y1);
-                frame.rect_clipped(pad, shade.line.alpha(shade.line.a * 0.5), 0.0, body);
+                frame.rect_clipped(pad, 0.0, shade.line.alpha(shade.line.a * 0.5), body);
             } else if y0 == y1 && !unified {
                 let pane = parts.panes[side];
                 let line = Rect::new(pane.rect.x, y0 - 0.5, pane.rect.w, 1.0);
-                frame.rect_clipped(line, shade.edge, 0.0, body);
+                frame.rect_clipped(line, 0.0, shade.edge, body);
             }
         }
         if view.focus.is_some_and(|(focus, _)| focus == h) {
@@ -1396,13 +1407,13 @@ pub(in crate::view) fn draw_ribbon(
         let x = area.x + k as f32 * STEP;
         let (top, bottom) = at((k as f32 + 1.0) / columns as f32);
         if bottom > top {
-            frame.rect_clipped(Rect::new(x, top, STEP, bottom - top), shade.line, 0.0, clip);
+            frame.rect_clipped(Rect::new(x, top, STEP, bottom - top), 0.0, shade.line, clip);
         }
         // 边线：从前一列的位置连接到本列，高度至少 1 逻辑像素。
         for (from, to) in [(previous.0, top), (previous.1, bottom)] {
             let (y0, y1) = (from.min(to), from.max(to));
             let rect = Rect::new(x, y0 - 0.5, STEP, (y1 - y0).max(1.0));
-            frame.rect_clipped(rect, shade.edge, 0.0, clip);
+            frame.rect_clipped(rect, 0.0, shade.edge, clip);
         }
         previous = (top, bottom);
     }

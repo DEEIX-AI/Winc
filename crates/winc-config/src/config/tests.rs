@@ -367,6 +367,7 @@ fn round_trips_through_json() {
         language: Some(LocaleChoice::Fixed(winc_i18n::Locale::EnUs)),
         markdown_remote_images: Some(false),
         markdown_text_width: Some(TextWidth::Wide),
+        split_preview_left: Some(true),
         markdown_font: Some("LXGW Neo XiHei".to_string()),
         markdown_size: Some(14.0),
         markdown_line_numbers: Some(false),
@@ -941,4 +942,28 @@ fn rulers_keep_valid_columns_in_order() {
     let (config, problems) = Config::parse(r#"{"editor": {"rulers": 80}}"#);
     assert!(config.editor_rulers.is_empty());
     assert_eq!(problems.len(), 1, "{problems:?}");
+}
+
+#[test]
+fn split_preview_position_defaults_to_right_and_round_trips() {
+    let (unset, problems) = Config::parse("{}");
+    assert!(problems.is_empty());
+    assert_eq!(unset.split_preview_left, None);
+    assert!(!unset.split_preview_left.unwrap_or_default());
+    assert!(!unset.to_json().contains("splitPreviewPosition"));
+
+    for (value, left) in [("right", false), ("left", true)] {
+        let json = format!(r#"{{"markdown":{{"splitPreviewPosition":"{value}"}}}}"#);
+        let (config, problems) = Config::parse(&json);
+        assert!(problems.is_empty());
+        assert_eq!(config.split_preview_left, Some(left));
+        let saved = config.to_json();
+        assert!(saved.contains(&format!(r#""splitPreviewPosition": "{value}""#)));
+        assert_eq!(Config::parse(&saved), (config, Vec::new()));
+    }
+
+    let (invalid, problems) = Config::parse(r#"{"markdown":{"splitPreviewPosition":"bottom"}}"#);
+    assert_eq!(invalid.split_preview_left, None);
+    assert_eq!(problems.len(), 1);
+    assert!(problems[0].contains("markdown.splitPreviewPosition"));
 }

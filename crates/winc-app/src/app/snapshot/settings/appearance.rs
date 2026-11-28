@@ -68,7 +68,7 @@ fn settings_font_name_is_checked_and_can_be_abandoned() {
     );
 
     // 字体列表中逐个检查，写明第一个找不到的字体（第一项是系统中已安装的任一字族）。
-    if let Some(family) = winc_render::installed_fonts().first() {
+    if let Some(family) = cpui_render::installed_fonts().first() {
         let list = format!("{}, 绝对不存在的字体 ZZZ, 另一个 YYY", family.name);
         app.edit_field(|f| {
             f.select_all();
@@ -189,7 +189,7 @@ fn a_font_can_be_chosen_from_the_menu() {
     // 编辑器字体直接列出已安装的常用编程字体和当前的字体，界面字体直接列出常用界面字体，其余
     // 字体在子菜单里。
     use crate::app::input::context_menu::{COMMON_FONTS, COMMON_UI_FONTS, MenuEntry, font_menu};
-    let fonts = winc_render::installed_fonts();
+    let fonts = cpui_render::installed_fonts();
     let listed = |setting, current| {
         (font_menu(setting, current).iter())
             .filter(|entry| matches!(entry, MenuEntry::Item(MenuCommand::Font(_), _)))
@@ -385,7 +385,7 @@ fn the_background_image_shows_under_the_base_colors() {
     let dir = sample_folder("settings-background");
     // 一张纯红的图片，比窗口大。
     let image = dir.join("红.png");
-    let red = winc_render::Image {
+    let red = cpui_render::Snapshot {
         pixels: vec![0xffff_0000; 2000 * 1500],
         width: 2000,
         height: 1500,
@@ -402,7 +402,7 @@ fn the_background_image_shows_under_the_base_colors() {
         paint(app);
         app.wait_for_wallpaper();
         paint(app);
-        let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+        let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
         let at = (y * SCALE) as usize * image.width as usize + (x * SCALE) as usize;
         let px = image.pixels[at];
         ((px >> 16) & 0xff, (px >> 8) & 0xff, px & 0xff)
@@ -432,7 +432,13 @@ fn the_background_image_shows_under_the_base_colors() {
     assert_eq!(sample(&mut app), mixed(plain, 0.15));
     // 图层按物理像素生成，不论不透明度：铺满窗口需要 2560 × 1920，比图片大，图层保持图片原来的
     // 大小，不放大。
-    let size = app.frame.renderer.as_ref().unwrap().wallpaper_size();
+    let size = app
+        .frame
+        .renderer
+        .as_ref()
+        .unwrap()
+        .wallpaper()
+        .map(|w| w.size());
     assert_eq!((SIZE.0, SIZE.1, SCALE), (1280.0, 820.0, 2.0));
     assert_eq!(size, Some((2000, 1500)));
     // 浮在内容之上的设置卡片不透出背景图。
@@ -467,14 +473,29 @@ fn the_background_image_shows_under_the_base_colors() {
     app.settings_adjust(Setting::BackgroundOpacity, false);
     assert_eq!(app.config.ui_background_opacity, Some(0.0));
     assert_eq!(sample(&mut app), plain);
-    assert_eq!(app.frame.renderer.as_ref().unwrap().wallpaper_size(), None);
+    assert_eq!(
+        app.frame
+            .renderer
+            .as_ref()
+            .unwrap()
+            .wallpaper()
+            .map(|w| w.size()),
+        None
+    );
     app.config.ui_background_opacity = Some(95.0);
     app.settings_adjust(Setting::BackgroundOpacity, true);
     app.settings_adjust(Setting::BackgroundOpacity, true);
     assert_eq!(app.config.ui_background_opacity, Some(100.0));
     assert_eq!(sample(&mut app), (255, 0, 0));
     // 不透明度不影响图层的大小。
-    let size = |app: &App| app.frame.renderer.as_ref().unwrap().wallpaper_size();
+    let size = |app: &App| {
+        app.frame
+            .renderer
+            .as_ref()
+            .unwrap()
+            .wallpaper()
+            .map(|w| w.size())
+    };
     assert_eq!(size(&app), Some((2000, 1500)));
     app.config.ui_background_opacity = Some(20.0);
     assert_eq!(sample(&mut app), mixed(plain, 0.2));
@@ -511,7 +532,15 @@ fn the_background_image_shows_under_the_base_colors() {
     // 取消：恢复纯色，图层释放。
     app.set_background_image(None);
     assert_eq!(sample(&mut app), dark);
-    assert_eq!(app.frame.renderer.as_ref().unwrap().wallpaper_size(), None);
+    assert_eq!(
+        app.frame
+            .renderer
+            .as_ref()
+            .unwrap()
+            .wallpaper()
+            .map(|w| w.size()),
+        None
+    );
 
     // 无法加载的图片：保持纯色，之后不再重试。
     app.set_background_image(Some(dir.join("不存在.png")));
@@ -580,7 +609,7 @@ fn scrolling_settings_over_a_background_image_looks_the_same() {
     let image = dir.join("图.png");
     let (w, h) = (640, 400);
     let pixels = (0..w * h).map(|i| 0xff00_0000 | ((i % w * 255 / w) << 16) | (i / w * 255 / h));
-    let gradient = winc_render::Image {
+    let gradient = cpui_render::Snapshot {
         pixels: pixels.collect(),
         width: w,
         height: h,
@@ -599,7 +628,7 @@ fn scrolling_settings_over_a_background_image_looks_the_same() {
             .renderer
             .as_ref()
             .unwrap()
-            .image()
+            .snapshot()
             .unwrap()
             .pixels
             .clone()

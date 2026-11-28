@@ -26,7 +26,7 @@ pub(in crate::view) fn draw_window_controls(app: &App, frame: &mut Frame<'_>) {
         let hovered = app.pointer.hover == Hover::WindowControl(control);
         let close = control == WindowControl::Close;
         let color = if close && hovered {
-            frame.rect_clipped(button, p.error, RADIUS_ROW, window);
+            frame.rect_clipped(button, RADIUS_ROW, p.error, window);
             p.text_on_accent
         } else {
             draw_button(frame, p, button, window, hovered, false);
@@ -99,9 +99,9 @@ fn tab_labels(app: &App, frame: &mut Frame<'_>) -> Vec<TabLabel> {
                 .then(|| tab_folder(docs, index))
                 .flatten();
 
-            let mut text = frame.measure(FontKind::Ui, app.fonts.ui, name);
+            let mut text = frame.measure(Font::ui(app.fonts.ui), name);
             if let Some(folder) = &folder {
-                text += 6.0 + frame.measure(FontKind::Ui, app.fonts.ui_small, folder);
+                text += 6.0 + frame.measure(Font::ui(app.fonts.ui_small), folder);
             }
             let width = match app.tabs.width_lock {
                 Some((locked, width)) if locked == index => width,
@@ -122,13 +122,13 @@ fn tab_labels(app: &App, frame: &mut Frame<'_>) -> Vec<TabLabel> {
             // 目录名最多占文本区的 `TAB_FOLDER_SHARE`，剩下的给文件名；文件名截短后若有余量，
             // 目录名用满余量。
             let folder_w = frame
-                .measure(FontKind::Ui, app.fonts.ui_small, &folder)
+                .measure(Font::ui(app.fonts.ui_small), &folder)
                 .min(room * TAB_FOLDER_SHARE);
             let shown = ellipsize(frame, name, app.fonts.ui, room - 6.0 - folder_w).into_owned();
-            let left = room - 6.0 - frame.measure(FontKind::Ui, app.fonts.ui, &shown);
+            let left = room - 6.0 - frame.measure(Font::ui(app.fonts.ui), &shown);
             // 放得下完整目录名时直接显示（`src`、`api` 等短名比 `TAB_FOLDER_MIN` 还窄）；
             // 须截短时至少保留 `TAB_FOLDER_MIN`。
-            let full = frame.measure(FontKind::Ui, app.fonts.ui_small, &folder);
+            let full = frame.measure(Font::ui(app.fonts.ui_small), &folder);
             let folder = (left >= full.min(TAB_FOLDER_MIN))
                 .then(|| ellipsize(frame, &folder, app.fonts.ui_small, left).into_owned());
             TabLabel {
@@ -335,7 +335,7 @@ fn draw_tabs(app: &mut App, frame: &mut Frame<'_>) {
                 1.0,
                 TAB_DIVIDER,
             );
-            frame.rect_clipped(line, p.tab_divider, 0.0, view);
+            frame.rect_clipped(line, 0.0, p.tab_divider, view);
         }
 
         // 展开途中按最终宽度排列图标、名字和关闭按钮，裁剪到当前宽度；内容在宽度展开大部分后才
@@ -515,7 +515,7 @@ fn draw_tab(
 
     // 当前的是一块带细边的底（颜色由主题定：带一点强调色，其余是凸起的一块灰），悬停只铺浅色。
     if marked || behind {
-        frame.rect_clipped(tab, p.tab_fill.alpha(p.tab_fill.a * 0.5), RADIUS_TAB, view);
+        frame.rect_clipped(tab, RADIUS_TAB, p.tab_fill.alpha(p.tab_fill.a * 0.5), view);
     } else {
         draw_tab_fill(frame, p, tab, active, hovered, view);
     }
@@ -558,7 +558,7 @@ fn draw_tab(
     let close = tab_close(tab);
     if doc.is_dirty() && !hovered {
         let dot = Rect::new(close.x + 5.0, close.y + 5.0, 6.0, 6.0);
-        frame.rect_clipped(dot, p.modified_dot, 3.0, view);
+        frame.rect_clipped(dot, 3.0, p.modified_dot, view);
     } else if hovered || active {
         draw_tab_close(
             frame,
@@ -601,9 +601,9 @@ pub(in crate::view) fn draw_tab_fill(
     clip: Rect,
 ) {
     if active {
-        frame.rect_clipped(tab, p.tab_fill, RADIUS_TAB, clip);
+        frame.rect_clipped(tab, RADIUS_TAB, p.tab_fill, clip);
     } else if hovered {
-        frame.rect_clipped(tab, p.hover, RADIUS_TAB, clip);
+        frame.rect_clipped(tab, RADIUS_TAB, p.hover, clip);
     }
 }
 
@@ -624,7 +624,7 @@ pub(in crate::view) fn draw_tab_close(
     clip: Rect,
 ) {
     if on {
-        frame.rect_clipped(close, p.hover, close.h / 2.0, clip);
+        frame.rect_clipped(close, close.h / 2.0, p.hover, clip);
     }
     let color = if on { p.text_muted } else { p.text_dim };
     icons::close(frame, center(close), 6.5, color, clip);

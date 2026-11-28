@@ -65,15 +65,15 @@ pub(crate) struct PreviewState {
     pub(in crate::app) tables: tables::TableJobs,
     /// 表格预览上次绘制的几何：工作表标签、最大滚动距离和列宽缓存。
     pub(crate) table_layout: tables::TableLayout,
-    /// 分栏预览右侧的图片。
+    /// 分栏中的图片预览。
     pub(crate) split: images::SplitPreview,
-    /// Markdown 预览（分栏右侧或仅预览模式）。
+    /// Markdown 预览（分栏或仅预览模式）。
     pub(crate) markdown: markdown::MarkdownPreview,
     /// 当前标签的 PDF 预览。
     pub(crate) pdf: pdf::PdfPreview,
     /// LaTeX 文档的编译，各窗格共用。
     pub(crate) latex: latex::LatexBuilds,
-    /// 分栏预览时源代码一侧占编辑区宽度的比例，取值 0 到 1；`None` 表示各占一半。
+    /// 分栏预览时左侧占分栏前宽度的比例，取值 0 到 1，`None` 表示各占一半。
     ///
     /// 拖动中间的分隔线时改变，所有分栏预览的标签共用该值。
     pub(in crate::app) split_share: Option<f32>,

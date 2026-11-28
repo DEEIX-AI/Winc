@@ -160,7 +160,7 @@ pub struct MenuItem<'a> {
 /// 菜单项左侧的图标：已绘制好的像素（预乘过透明度），`size` 是逻辑尺寸。
 pub struct MenuIcon<'a> {
     /// 图标的像素。
-    pub image: &'a Image,
+    pub image: &'a Snapshot,
     /// 图标的逻辑尺寸（宽，高）。
     pub size: (f32, f32),
 }

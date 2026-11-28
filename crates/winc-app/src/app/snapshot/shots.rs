@@ -125,8 +125,7 @@ fn snapshot_line_icons() {
 
     for (tag, dark) in [("light", false), ("dark", true)] {
         let p = Palette::for_dark(dark);
-        let mut renderer =
-            Renderer::offscreen(10.0 * 32.0, 32.0, 4.0, p.sidebar_bg, None, None).unwrap();
+        let mut renderer = Renderer::offscreen(10.0 * 32.0, 32.0, 4.0, p.sidebar_bg).unwrap();
         renderer.draw(|frame| {
             let all = Rect::new(0.0, 0.0, 10.0 * 32.0, 32.0);
             frame.rect(all, p.sidebar_bg);
@@ -143,7 +142,7 @@ fn snapshot_line_icons() {
         std::fs::create_dir_all(&dir).unwrap();
         write_png(
             &dir.join(format!("icons-{tag}.png")),
-            renderer.image().unwrap(),
+            renderer.snapshot().unwrap(),
         )
         .unwrap();
     }
@@ -198,10 +197,7 @@ fn snapshot_top_left() {
         app.run(Command::Insert("123".into()));
         for (state, visible) in [("open", true), ("closed", false)] {
             app.set_sidebar(visible);
-            app.frame.renderer = Some(
-                Renderer::offscreen(SIZE.0, SIZE.1, ZOOM, app.palette.frame_bg, None, None)
-                    .unwrap(),
-            );
+            app.frame.renderer = Some(offscreen(&app, SIZE, ZOOM));
             paint(&mut app);
             let mut renderer = app.frame.renderer.take().unwrap();
             renderer.draw(|frame| {
@@ -211,10 +207,10 @@ fn snapshot_top_left() {
                     let x = TRAFFIC_LIGHT_LEFT + i as f32 * 23.0;
                     let y = ISLAND_MARGIN + (TOP_BAR - 14.0) / 2.0;
                     let circle = Rect::new(x, y, 14.0, 14.0);
-                    frame.rect_clipped(circle, Color::hex(color), 7.0, circle);
+                    frame.rect_clipped(circle, 7.0, Color::hex(color), circle);
                 }
             });
-            let image = renderer.image().unwrap();
+            let image = renderer.snapshot().unwrap();
             let (w, h) = ((CROP.0 * ZOOM) as usize, (CROP.1 * ZOOM) as usize);
             let pixels = image
                 .pixels
@@ -222,7 +218,7 @@ fn snapshot_top_left() {
                 .take(h)
                 .flat_map(|row| row[..w].iter().copied())
                 .collect();
-            let crop = Image {
+            let crop = Snapshot {
                 pixels,
                 width: w as u32,
                 height: h as u32,

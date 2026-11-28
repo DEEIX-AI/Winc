@@ -102,7 +102,7 @@ fn draw_group(
     let widest = ('0'..='9')
         .map(|digit| {
             (
-                frame.measure(FontKind::Ui, size, digit.encode_utf8(&mut [0; 4])),
+                frame.measure(Font::ui(size), digit.encode_utf8(&mut [0; 4])),
                 digit,
             )
         })
@@ -126,8 +126,8 @@ fn draw_group(
             };
             StatusEntry {
                 key,
-                content: frame.measure(FontKind::Ui, size, &text) + extra,
-                width: frame.measure(FontKind::Ui, size, &stable) + extra,
+                content: frame.measure(Font::ui(size), &text) + extra,
+                width: frame.measure(Font::ui(size), &stable) + extra,
                 text,
                 item,
             }
@@ -152,7 +152,7 @@ fn draw_group(
                 row.item.is_some() && app.pointer.hover == Hover::Status(StatusItem::Update);
             let (fill, ink) = button.colors(p, hovered);
             let alpha = row.alpha.max(row.previous.as_ref().map_or(0.0, |f| f.2)) * opacity;
-            frame.rect_clipped(pill, fill.alpha(fill.a * alpha), RADIUS_ROW, bar);
+            frame.rect_clipped(pill, RADIUS_ROW, fill.alpha(fill.a * alpha), bar);
             let clip = bar.intersect(pill);
             let center = (*right + UPDATE_ICON / 2.0 - 2.5, bar.y + bar.h / 2.0);
             button.draw_icon(frame, center, ink.alpha(ink.a * row.alpha * opacity), clip);
@@ -234,7 +234,7 @@ fn draw_content(
     };
     if picker {
         let cy = icon_center_y(app, bar, app.fonts.ui_small);
-        let text_w = frame.measure(FontKind::Ui, app.fonts.ui_small, text);
+        let text_w = frame.measure(Font::ui(app.fonts.ui_small), text);
         if key == StatusKey::Branch {
             icons::branch_small(frame, (x + 4.0, cy), fade(p.text_muted), clip);
         } else {
@@ -345,7 +345,7 @@ pub(in crate::view) fn update_tooltip(app: &App) -> Option<String> {
 pub(super) fn draw_status(app: &mut App, frame: &mut Frame<'_>) {
     let p = app.palette;
     let bar = app.layout.status;
-    frame.rect(bar, p.frame_bg);
+    frame.surface(bar, p.frame_bg);
     // Vim 模式的命令行与查找占用整行。
     if app.vim_prompt_open() {
         draw_command_line(app, frame);
@@ -400,7 +400,7 @@ pub(super) fn draw_status(app: &mut App, frame: &mut Frame<'_>) {
         if !open && let Some(failed) = unseen.reduce(|a, b| a || b) {
             let dot = if failed { p.error } else { p.accent };
             let at = Rect::new(pill.right() - 7.0, pill.y + 2.0, 5.0, 5.0);
-            frame.rect_clipped(at, dot.alpha(opacity), 2.5, bar);
+            frame.rect_clipped(at, 2.5, dot.alpha(opacity), bar);
         }
         if app.terminal_enabled() {
             status_hits.push((pill, item));
@@ -619,9 +619,9 @@ pub(super) fn draw_status(app: &mut App, frame: &mut Frame<'_>) {
 
         for (_, text, locked) in flags.into_iter().filter(|(on, ..)| *on) {
             let icon_w = if locked { 13.0 } else { 0.0 };
-            let w = frame.measure(FontKind::Ui, app.fonts.ui_small, text) + icon_w + 16.0;
+            let w = frame.measure(Font::ui(app.fonts.ui_small), text) + icon_w + 16.0;
             let chip = Rect::new(right + 8.0 - w, bar.y + 4.0, w, bar.h - 8.0);
-            frame.rounded(chip, p.selected_inactive, chip.h / 2.0);
+            frame.rounded(chip, chip.h / 2.0, p.selected_inactive);
 
             if locked {
                 let cy = icon_center_y(app, chip, app.fonts.ui_small);
@@ -706,10 +706,10 @@ pub(super) fn draw_status(app: &mut App, frame: &mut Frame<'_>) {
     let message = message.as_deref().or(progress);
     let mut reserved = 0.0;
     if let Some(vim) = &vim {
-        reserved += frame.measure(FontKind::Ui, size, vim) + 16.0;
+        reserved += frame.measure(Font::ui(size), vim) + 16.0;
     }
     if let Some(message) = message {
-        reserved += frame.measure(FontKind::Ui, size, message).min(half);
+        reserved += frame.measure(Font::ui(size), message).min(half);
     }
 
     if doc.is_some() {
@@ -740,7 +740,7 @@ pub(super) fn draw_status(app: &mut App, frame: &mut Frame<'_>) {
 
             // 有路径的段可点击：悬停时铺按钮底色，其目录菜单打开时显示为按下状态。
             if let Some(i) = i.filter(|_| crumb.is_some_and(|crumb| crumb.path.is_some())) {
-                let w = frame.measure(FontKind::Ui, app.fonts.ui_small, name);
+                let w = frame.measure(Font::ui(app.fonts.ui_small), name);
                 let pill = Rect::new(x - CRUMB_PAD, bar.y + 4.0, w + 2.0 * CRUMB_PAD, bar.h - 8.0);
                 let hovered = app.pointer.hover == Hover::Crumb(i);
                 draw_button(

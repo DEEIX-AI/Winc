@@ -42,9 +42,9 @@ pub(super) fn dir_label_width(app: &App, frame: &mut Frame<'_>, label: &str) -> 
     let parts = label.split('/').count() as f32;
     let names: f32 = label
         .split('/')
-        .map(|part| frame.measure(FontKind::Ui, size, part))
+        .map(|part| frame.measure(Font::ui(size), part))
         .sum();
-    let slash = frame.measure(FontKind::Ui, size, "/") + 2.0 * CHAIN_GAP;
+    let slash = frame.measure(Font::ui(size), "/") + 2.0 * CHAIN_GAP;
     names + (parts - 1.0) * slash
 }
 
@@ -62,10 +62,10 @@ pub(in crate::view::git) fn dir_parts<'a>(
     };
     let size = app.fonts.ui;
     let widths: Vec<f32> = (names.iter())
-        .map(|name| frame.measure(FontKind::Ui, size, name))
+        .map(|name| frame.measure(Font::ui(size), name))
         .collect();
-    let step = frame.measure(FontKind::Ui, size, "/") + 2.0 * CHAIN_GAP;
-    let fold = frame.measure(FontKind::Ui, size, CHAIN_FOLD);
+    let step = frame.measure(Font::ui(size), "/") + 2.0 * CHAIN_GAP;
+    let fold = frame.measure(Font::ui(size), CHAIN_FOLD);
     let (parts, _) = fold_chain(&widths, step, fold, names.len() - 1, room);
     (parts.into_iter())
         .map(|part| Cow::Borrowed(part.map_or(CHAIN_FOLD, |i| names[i])))
@@ -86,7 +86,7 @@ pub(super) fn draw_dir_parts<S: AsRef<str>>(
     let p = app.palette;
     let size = app.fonts.ui;
     let separator = p.text.alpha(p.text.a * CHAIN_SEPARATOR);
-    let slash = frame.measure(FontKind::Ui, size, "/");
+    let slash = frame.measure(Font::ui(size), "/");
     let mut x = x;
     for (k, part) in parts.iter().enumerate() {
         let part = part.as_ref();
@@ -107,7 +107,7 @@ pub(super) fn draw_dir_parts<S: AsRef<str>>(
         x = if a > 0.0 {
             ui_text(frame, app, x, band, part, color.alpha(color.a * a), clip)
         } else {
-            x + frame.measure(FontKind::Ui, size, part)
+            x + frame.measure(Font::ui(size), part)
         };
     }
     x
@@ -128,7 +128,7 @@ pub(in crate::view::git) fn file_parts<'a>(
     if let Some(dir) = dir {
         let dir = match room {
             Some(room) => {
-                let used = frame.measure(FontKind::Ui, app.fonts.ui, name) + DIR_GAP;
+                let used = frame.measure(Font::ui(app.fonts.ui), name) + DIR_GAP;
                 nearest_dirs(frame, dir, app.fonts.ui_small, room - used)
             }
             None => Cow::Borrowed(dir),
@@ -146,14 +146,14 @@ pub(super) fn nearest_dirs<'a>(
     size: f32,
     room: f32,
 ) -> Cow<'a, str> {
-    if frame.measure(FontKind::Ui, size, dir) <= room {
+    if frame.measure(Font::ui(size), dir) <= room {
         return Cow::Borrowed(dir);
     }
     let mut rest = dir;
     while let Some((_, tail)) = rest.split_once('/') {
         rest = tail;
         let shown = format!("{CHAIN_FOLD}/{rest}");
-        if frame.measure(FontKind::Ui, size, &shown) <= room || !rest.contains('/') {
+        if frame.measure(Font::ui(size), &shown) <= room || !rest.contains('/') {
             return Cow::Owned(shown);
         }
     }
@@ -183,7 +183,7 @@ pub(super) fn draw_file_parts<S: AsRef<str>>(
         x = match (k, a > 0.0) {
             (0, true) => ui_text(frame, app, start, band, part.as_ref(), ink, clip),
             (_, true) => ui_text_small(frame, app, start, band, part.as_ref(), ink, clip),
-            (_, false) => start + frame.measure(FontKind::Ui, size, part.as_ref()),
+            (_, false) => start + frame.measure(Font::ui(size), part.as_ref()),
         };
     }
     x
@@ -203,10 +203,10 @@ pub(in crate::view::git) fn parts_width<S: AsRef<str>>(
         } else {
             app.fonts.ui_small
         };
-        frame.measure(FontKind::Ui, size, part)
+        frame.measure(Font::ui(size), part)
     };
     let gap = if folder {
-        frame.measure(FontKind::Ui, size, "/") + 2.0 * CHAIN_GAP
+        frame.measure(Font::ui(size), "/") + 2.0 * CHAIN_GAP
     } else {
         DIR_GAP
     };

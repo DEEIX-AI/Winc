@@ -464,8 +464,8 @@ fn relayouts_leave_a_wide_table_where_it_was_scrolled() {
     let scrolled = app.markdown_table_scroll(key);
     assert!(scrolled > 0.0);
 
-    let narrow = Renderer::offscreen(1000.0, SIZE.1, SCALE, app.palette.frame_bg, None, None);
-    app.frame.renderer = Some(narrow.unwrap());
+    let narrow = offscreen(&app, (1000.0, SIZE.1), SCALE);
+    app.frame.renderer = Some(narrow);
     app.measure_fonts();
     settle(&mut app);
     assert_eq!(app.markdown_table_scroll(key), scrolled);
@@ -611,8 +611,8 @@ fn the_split_caret_bar_moves_beside_a_spread_table() {
         "md-split-caret-bar",
         &format!("前文\n\n{head}\n{rule}\n{row}\n\n后文\n"),
     );
-    let wide = Renderer::offscreen(2600.0, SIZE.1, SCALE, app.palette.frame_bg, None, None);
-    app.frame.renderer = Some(wide.unwrap());
+    let wide = offscreen(&app, (2600.0, SIZE.1), SCALE);
+    app.frame.renderer = Some(wide);
     app.measure_fonts();
     app.set_preview_mode(PreviewMode::Split);
     settle(&mut app);

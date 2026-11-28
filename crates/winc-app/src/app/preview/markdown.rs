@@ -1,4 +1,4 @@
-//! Markdown 预览（分栏的右半边，或只看预览时的整个编辑区）：后台解析、滚动、链接和图片。
+//! Markdown 预览的后台解析、滚动、链接和图片。
 //!
 //! 同一时刻只在后台解析一个版本，输入快于解析时跳过中间的版本；可编辑的预览在解析足够快时
 //! 改为绘制之前直接解析（见 `INLINE_PARSE`）。排版在绘制时进行（需要测量字宽），
@@ -151,14 +151,14 @@ pub(crate) struct TableBar {
     /// 表格：（顶层块序号，块中表格的序号）。
     pub key: (usize, usize),
     /// 滚动条的轨道（窗口坐标）：表格的显示区域，滑块位于其底部。
-    pub track: winc_render::Rect,
+    pub track: cpui_render::Rect,
     /// 表格的总宽度（逻辑像素）。
     pub content: f32,
 }
 
 pub(crate) struct MarkdownPreview {
-    /// 上一帧的绘制区域（分栏的右半边或整个编辑区）；不显示时为空矩形。
-    pub area: winc_render::Rect,
+    /// 上一帧的预览绘制区域。不显示时为空矩形。
+    pub area: cpui_render::Rect,
     /// 预览的文档；当前标签改变时重新开始。
     pub doc: Option<DocumentId>,
     /// 最近一次解析的结果。
@@ -253,12 +253,12 @@ pub(crate) struct MarkdownPreview {
     /// 鼠标所在代码块在 `codes` 中的序号。
     pub code_hover: Option<usize>,
     /// 鼠标所在图片的范围（窗口坐标）。
-    pub(crate) image_hover: Option<winc_render::Rect>,
+    pub(crate) image_hover: Option<cpui_render::Rect>,
     /// 上一帧排版的总高度（逻辑像素），滚动时据此限制范围。
     pub height: f32,
     /// 选中的文字：起点和终点（整份文字里的字符偏移，见 `laid::Laid::text`）。
     pub selection: Option<(usize, usize)>,
-    /// 最近一次点击是否在预览上：为真时分栏中的 ⌘C、⌘A、⌘F 作用于预览；点击左侧文字后
+    /// 最近一次点击是否在预览上：为真时分栏中的 ⌘C、⌘A、⌘F 作用于预览。点击源代码后
     /// 恢复为作用于文字。
     pub focused: bool,
     /// 右键点中的字在原文中的位置（字节偏移），供「在源代码中显示」使用；点在没有对应原文的
@@ -270,7 +270,7 @@ pub(crate) struct MarkdownPreview {
     pub find_doc: Option<winc_editor::Document>,
     /// `find_doc` 的装入次数：每次装入使用新的文档标识，原有的查找结果随之作废。
     find_serial: u64,
-    /// 分栏时上一次两侧对齐的状态：文档、左侧文字的滚动行、预览的总高度。
+    /// 分栏时上一次两侧对齐的状态：文档、源代码的滚动行、预览的总高度。
     ///
     /// 左侧滚动（滚轮、光标移出屏幕、输入）或预览重排后，下一帧按左侧重新对齐右侧；
     /// 在右侧滚动时直接对齐左侧，并记录该状态。
@@ -438,7 +438,7 @@ impl Default for MarkdownPreview {
             diagram: None,
             code_hover: None,
             image_hover: None,
-            area: winc_render::Rect::default(),
+            area: cpui_render::Rect::default(),
             height: 0.0,
             selection: None,
             focused: false,
@@ -606,8 +606,8 @@ fn in_fence<'a>(lines: impl Iterator<Item = ropey::RopeSlice<'a>>) -> bool {
     open.is_some()
 }
 
-/// 返回当前标签显示 Markdown 预览的区域（分栏的右半边或整个编辑区）；不显示时返回 `None`。
-pub(crate) fn shown_area(app: &App) -> Option<winc_render::Rect> {
+/// 返回当前标签的 Markdown 预览区域。不显示时返回 `None`。
+pub(crate) fn shown_area(app: &App) -> Option<cpui_render::Rect> {
     let doc = app.editor.active()?;
     // docx、EPUB 和内容已取回的阅读标签没有源代码可切换，总是以整个编辑区显示阅读视图。
     let reading = matches!(doc.reading, Some(winc_editor::Reading::Ready(_)));
@@ -903,7 +903,7 @@ impl App {
         });
     }
 
-    /// 键盘焦点在预览上时（只看预览，或分栏时点击了右侧）按键滚动预览，返回是否处理了该键。
+    /// 键盘焦点在预览上时（只看预览，或分栏时点击了预览）按键滚动预览，返回是否处理了该键。
     ///
     /// ↑↓ 滚动一小段，`PageUp` / `PageDown`、空格（加 ⇧ 向上）滚动一屏，Home / End、
     /// ⌘↑ / ⌘↓ 滚动到开头、末尾；Esc 清除选区。分栏时在预览上输入、回车、删除：焦点回到
@@ -1061,7 +1061,7 @@ impl App {
             _ => Some((at, at)),
         };
         self.pointer.drag = crate::app::Drag::MarkdownText;
-        // 分栏时左侧的光标移到点中的字上：随后输入的文字（输入时焦点回到左侧）插入在此处。只看
+        // 分栏时源代码的光标移到点中的字上。随后输入的文字插入此处，焦点回到源代码。只看
         // 预览时光标不可见，不移动。
         if count == 1
             && !shift

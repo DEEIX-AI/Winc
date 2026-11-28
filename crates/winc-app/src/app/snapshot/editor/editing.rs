@@ -1037,8 +1037,8 @@ fn lines_read_up_to_the_right_edge_keep_the_highlight_state() {
         assert!(app.editor.active().unwrap().is_large());
         let (text, lh) = (app.layout.text, app.fonts.line_height);
         let renderer = app.frame.renderer.take().unwrap();
-        let scale = renderer.scale_factor();
-        let image = renderer.image().unwrap();
+        let scale = renderer.scale();
+        let image = renderer.snapshot().unwrap();
         let (x0, x1) = (
             (text.x * scale) as usize,
             ((text.x + 240.0) * scale) as usize,
@@ -1158,7 +1158,7 @@ fn lines_past_sixteen_million_rows_each_take_their_own_row() {
     paint(&mut app);
 
     let (gutter, text, lh) = (app.layout.gutter, app.layout.text, app.fonts.line_height);
-    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+    let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
     let width = image.width as usize;
     let px = |v: f32| (v * SCALE) as usize;
     // 行号栏中每一行都画有行号。
@@ -1192,7 +1192,7 @@ fn long_lines_expand_by_clicking_or_by_the_setting() {
     // 文本区第 `row` 行右半边是否画有内容。
     let inked = |app: &App, row: usize| {
         let (t, lh) = (app.layout.text, app.fonts.line_height);
-        let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+        let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
         let px = |v: f32| (v * SCALE) as usize;
         let (y0, y1) = (
             px(t.y + row as f32 * lh + 2.0),
@@ -1275,7 +1275,7 @@ fn the_far_end_of_a_whole_line_is_drawn_in_place() {
     let (t, lh, cell) = (app.layout.text, app.fonts.line_height, app.metrics.cell);
     let scroll = f64::from(app.editor.active().unwrap().scroll_x);
     let expected = f64::from(t.x + TEXT_PAD) + col as f64 * f64::from(cell) - scroll;
-    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+    let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
     let px = |v: f32| (v * SCALE) as usize;
     let (y0, y1) = (px(t.y + 2.0), px(t.y + lh - 2.0));
     let width = image.width as usize;

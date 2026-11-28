@@ -6,6 +6,7 @@
 
 use std::ops::Range;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use ropey::Rope;
 use winc_core::Lines;
@@ -16,7 +17,7 @@ use winc_syntax::{Highlighter, Language};
 
 use crate::document::{STICKY_HIGHLIGHT_BUDGET, rope_starts_quoted};
 use crate::editing::folding::line_breaks;
-use crate::editing::scopes::{self, Scope, ScopeMemo};
+use crate::editing::scopes::{self, FoldRange, Scope, ScopeMemo};
 
 /// 改动前后各自保留的未改动行数（行）。
 ///
@@ -68,6 +69,8 @@ pub struct DiffSide {
     revision: u64,
     /// 粘滞滚动查找外层块时记录的结果，见 [`ScopeMemo`]。
     sticky_memo: ScopeMemo,
+    /// 可折叠代码块的缓存：（文字版本号，Tab 宽度，块）。
+    fold_cache: Option<(u64, usize, Arc<[FoldRange]>)>,
 }
 
 impl DiffSide {
@@ -87,6 +90,7 @@ impl DiffSide {
             highlighter: Highlighter::new(language),
             revision: 0,
             sticky_memo: ScopeMemo::default(),
+            fold_cache: None,
         }
     }
 
@@ -344,6 +348,10 @@ pub struct DiffView {
     pub focus: Option<(usize, f64)>,
     /// 已展开的未改动内容，元素是各段的段号。
     expanded: Vec<usize>,
+    /// 收起的代码块，见 `code_folds` 模块。
+    code_folds: Vec<code_folds::CodeFold>,
+    /// 两侧被代码折叠隐藏的行，按开头排序、互不相交；排列显示行时由 `code_folds` 算出。
+    code_hidden: [Vec<Range<usize>>; 2],
     /// 右侧需要保持显示的行；所在的未改动内容中只显示这些行，其余部分仍然折叠。
     ///
     /// 用「»」还原一段改动后，还原的行不再有改动，不应立即被折叠，也不应因此展开整段内容。
@@ -423,6 +431,8 @@ impl DiffView {
             wrap: None,
             focus: None,
             expanded: Vec::new(),
+            code_folds: Vec::new(),
+            code_hidden: [Vec::new(), Vec::new()],
             pinned: None,
             widest: std::cell::Cell::new(None),
             source: None,
@@ -455,10 +465,12 @@ impl DiffView {
         self.new.highlighter.invalidate_from(first);
         self.new.sticky_memo.edited(self.new.revision, first);
         self.new.revision += 1;
+        self.new.fold_cache = None;
+        let delta = text.len_lines() as isize - self.new.text.len_lines() as isize;
+        self.follow_code_edit(RIGHT, first, delta);
         // 固定显示的行随上方增删的行移动：改动始于其上方时整体移动，始于其中间时只移动下边界。
         // 按一处连续的修改估算（输入、粘贴、撤销均属此类），足以使这些行保持在原来的内容上。
         if let Some(pinned) = &mut self.pinned {
-            let delta = text.len_lines() as isize - self.new.text.len_lines() as isize;
             let shift = |line: usize| line.saturating_add_signed(delta).max(first);
             if first < pinned.start {
                 *pinned = shift(pinned.start)..shift(pinned.end);
@@ -479,6 +491,9 @@ impl DiffView {
         self.old.highlighter.invalidate_from(first);
         self.old.sticky_memo.edited(self.old.revision, first);
         self.old.revision += 1;
+        self.old.fold_cache = None;
+        let delta = text.len_lines() as isize - self.old.text.len_lines() as isize;
+        self.follow_code_edit(LEFT, first, delta);
         self.old.text = text;
         self.old.missing = false;
         self.take_compared(compared);
@@ -517,6 +532,7 @@ impl DiffView {
         if old.hunks.len() == self.hunks.len() {
             self.expanded = old.expanded.clone();
         }
+        self.keep_code_folds(old);
         self.layout();
     }
 
@@ -817,6 +833,7 @@ impl DiffView {
     ///
     /// 文件以换行符结尾时，末尾的空行不参与比较、没有对应的显示行，视为位于最后一个显示行之后。
     pub fn row_of(&self, side: usize, line: usize) -> usize {
+        let line = self.visible_code_line(side, line);
         // 显示行按行号排序，因此使用二分查找：编辑时每帧都要按光标所在的行查找一次。
         self.rows[side].partition_point(|row| match row {
             SideRow::Line { line: l, .. } => *l < line,
@@ -848,6 +865,9 @@ impl DiffView {
 
     /// 展开第 `side` 侧第 `line` 行所在的折叠；该行未被折叠时不做改动。
     pub fn reveal_line(&mut self, side: usize, line: usize) {
+        if self.reveal_code_line(side, line) {
+            self.layout();
+        }
         let row = self.row_of(side, line);
         if let Some(SideRow::Fold { gap, .. }) = self.rows[side].get(row) {
             let gap = *gap;
@@ -1120,12 +1140,16 @@ impl DiffView {
 
     /// 把第 `side` 侧第 `line` 行的各段追加到 `rows`。
     fn push_line(&self, rows: &mut Vec<SideRow>, side: usize, line: usize, hunk: Option<usize>) {
+        if self.code_hidden(side, line) {
+            return;
+        }
         let parts = self.breaks(side, line).rows();
         rows.extend((0..parts).map(|part| SideRow::Line { line, hunk, part }));
     }
 
     /// 按改动和折叠状态重新排列两侧的显示行。
     fn layout(&mut self) {
+        self.update_code_hidden();
         let mut rows = [Vec::new(), Vec::new()];
         let mut hunk_rows = [
             Vec::with_capacity(self.hunks.len()),
@@ -1362,6 +1386,8 @@ fn content_len(line: ropey::RopeSlice<'_>) -> usize {
     }
     len
 }
+
+mod code_folds;
 
 #[cfg(test)]
 mod tests;

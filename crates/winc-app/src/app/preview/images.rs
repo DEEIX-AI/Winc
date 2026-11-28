@@ -6,6 +6,8 @@
 use std::collections::HashSet;
 use std::sync::{Arc, OnceLock, mpsc};
 
+use cpui_render::{FontSpec, FontWeight, GenericFamily, OutlineFont};
+
 use winc_editor::DocumentId;
 use winc_editor::{PictureState, PreviewKind, PreviewMode};
 use winc_preview::image::{self, Picture, Pixels, Source};
@@ -85,12 +87,13 @@ impl Default for ImageJobs {
 /// 使用系统字体绘制 SVG 中的文字。
 ///
 /// 字体文件在第一次用到时才映射，之后常驻内存，所有 SVG 共用。
-struct SystemGlyphs(winc_render::OutlineFonts);
+struct SystemGlyphs(cpui_render::OutlineFonts);
 
 impl svg::Glyphs for SystemGlyphs {
     fn glyph(&self, families: &[String], weight: u16, italic: bool, c: char) -> Option<svg::Glyph> {
+        let fonts = outline_fonts(families);
         self.0
-            .glyph(families, weight, italic, c)
+            .glyph(outline_font(&fonts, weight, italic), c)
             .map(|g| svg::Glyph {
                 outline: g.outline,
                 advance: g.advance,
@@ -98,7 +101,8 @@ impl svg::Glyphs for SystemGlyphs {
     }
 
     fn metrics(&self, families: &[String], weight: u16, italic: bool) -> svg::FontMetrics {
-        let m = self.0.metrics(families, weight, italic);
+        let fonts = outline_fonts(families);
+        let m = self.0.metrics(outline_font(&fonts, weight, italic));
         svg::FontMetrics {
             ascent: m.ascent,
             descent: m.descent,
@@ -107,11 +111,27 @@ impl svg::Glyphs for SystemGlyphs {
     }
 }
 
+/// 把 SVG 的字体族名换成字体请求：`serif`、`monospace` 等通用族名取系统的同类字体，其余按名字
+/// 查找。
+fn outline_fonts(families: &[String]) -> Vec<FontSpec> {
+    let spec = |name: &String| {
+        GenericFamily::from_name(name)
+            .map_or_else(|| FontSpec::Name(name.clone()), FontSpec::Generic)
+    };
+    families.iter().map(spec).collect()
+}
+
+/// 返回字体 `fonts` 按字重 `weight`、是否斜体 `italic` 取轮廓的请求。
+fn outline_font(fonts: &[FontSpec], weight: u16, italic: bool) -> OutlineFont<'_> {
+    let font = OutlineFont::new(fonts).weight(FontWeight(weight));
+    if italic { font.italic() } else { font }
+}
+
 /// 返回所有 SVG 共用的系统字体字形来源，首次调用时创建。
 pub(crate) fn system_glyphs() -> Arc<dyn svg::Glyphs> {
     static GLYPHS: OnceLock<Arc<SystemGlyphs>> = OnceLock::new();
     GLYPHS
-        .get_or_init(|| Arc::new(SystemGlyphs(winc_render::OutlineFonts::new())))
+        .get_or_init(|| Arc::new(SystemGlyphs(cpui_render::OutlineFonts::new())))
         .clone()
 }
 

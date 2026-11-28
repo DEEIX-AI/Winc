@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, mpsc};
 
+use cpui_render::{Renderer, Wallpaper, WallpaperFit};
 use winc_config::{BackgroundFit, Config};
-use winc_render::{Color, Renderer, Wallpaper, WallpaperFit};
 
 use crate::app::NoticeKind;
 use crate::app::{App, UserEvent};
@@ -69,8 +69,6 @@ pub(crate) struct WallpaperState {
     loading: Option<Source>,
     /// 无法加载的图片：不再重试，换一张图片后清除。
     failed: Option<PathBuf>,
-    /// 交给渲染器的底色，配色改变时更新。
-    surfaces: [Color; 3],
     sender: mpsc::Sender<(Source, Made)>,
     receiver: mpsc::Receiver<(Source, Made)>,
     /// 已从 `receiver` 取出、等下一帧交给渲染器的结果。
@@ -80,12 +78,10 @@ pub(crate) struct WallpaperState {
 impl Default for WallpaperState {
     fn default() -> Self {
         let (sender, receiver) = mpsc::channel();
-        let none = Color::hex(0).alpha(0.0);
         WallpaperState {
             shown: None,
             loading: None,
             failed: None,
-            surfaces: [none; 3],
             sender,
             receiver,
             arrived: Vec::new(),
@@ -224,19 +220,17 @@ impl App {
         });
     }
 
-    /// 让渲染器的背景图与配置、窗口大小和配色一致；每帧绘制前调用。
+    /// 让渲染器的背景图与配置和窗口大小一致；每帧绘制前调用。
     ///
     /// 需要重新生成时在后台进行，完成前继续显示原来的图层。
     pub(in crate::app) fn sync_wallpaper(&mut self, renderer: &mut Renderer) {
         self.accept_wallpapers();
-        let p = self.palette;
-        let surfaces = [p.frame_bg, p.sidebar_bg, p.editor_bg];
         if self.wallpaper_source().is_none() {
             self.wallpaper.shown = None;
             self.wallpaper.failed = None;
         } else {
             let window = self.layout.window;
-            self.request_wallpaper(((window.w, window.h), renderer.scale_factor()));
+            self.request_wallpaper(((window.w, window.h), renderer.scale()));
         }
         // 渲染器的图层与状态不一致（刚生成好、从其他窗口采用，或已取消）时更换。
         let state = &mut self.wallpaper;
@@ -247,11 +241,8 @@ impl App {
             _ => false,
         };
         if !same {
-            renderer.set_wallpaper(layer.cloned(), &surfaces);
-        } else if layer.is_some() && state.surfaces != surfaces {
-            renderer.set_wallpaper_surfaces(&surfaces);
+            renderer.set_wallpaper(layer.cloned());
         }
-        state.surfaces = surfaces;
     }
 
     /// 收下后台生成的图层。
@@ -341,7 +332,8 @@ fn make(source: &Source, window: Window, cache: Option<&Path>) -> Made {
     let fit = fit_of(source.fit);
     let cached = cache.and_then(|file| cache::read(file, &stamp));
     if let Some(layer) = cached.filter(|layer| usable(source, layer.size, layer.full, window)) {
-        let wallpaper = Wallpaper::new(layer.size, &layer.rgba, opacity, fit).ok_or_else(empty)?;
+        let wallpaper = Wallpaper::new(layer.size.0, layer.size.1, &layer.rgba, opacity, fit)
+            .ok_or_else(empty)?;
         return Ok((wallpaper, layer.full));
     }
     let bytes = std::fs::read(&source.path).map_err(|e| e.to_string())?;
@@ -354,7 +346,7 @@ fn make(source: &Source, window: Window, cache: Option<&Path>) -> Made {
     } else {
         winc_preview::image::resize(&image, size.0, size.1).rgba
     };
-    let wallpaper = Wallpaper::new(size, &rgba, opacity, fit).ok_or_else(empty)?;
+    let wallpaper = Wallpaper::new(size.0, size.1, &rgba, opacity, fit).ok_or_else(empty)?;
     if let Some(file) = cache {
         cache::write(file, &stamp, &cache::Cached { size, full, rgba });
     }

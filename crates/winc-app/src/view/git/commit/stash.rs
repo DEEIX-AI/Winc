@@ -18,8 +18,8 @@ pub(super) fn draw_stashes(
     let clip = app.layout.sidebar.intersect(area);
     frame.rect_clipped(
         Rect::new(area.x, area.y, area.w, 1.0),
-        p.separator,
         0.0,
+        p.separator,
         clip,
     );
     let size = app.fonts.ui_small;
@@ -32,7 +32,7 @@ pub(super) fn draw_stashes(
     // 标题：和改动列表的组标题一样，小一号的次要色字，右端一个写数量的徽标。
     let head = band(0);
     if app.pointer.hover == Hover::Commit(CommitTarget::Stashes) {
-        frame.rect_clipped(shade(head), p.hover, RADIUS_ROW, clip);
+        frame.rect_clipped(shade(head), RADIUS_ROW, p.hover, clip);
     }
     let cy = head.y + head.h / 2.0;
     let turned = app.stash_chevron() * FRAC_PI_2;
@@ -90,7 +90,7 @@ pub(super) fn draw_stashes(
             }
             StashLine::MoreStashes(rest) => {
                 if app.pointer.hover == Hover::Commit(CommitTarget::StashMore) {
-                    frame.rect_clipped(shade(row), p.hover, RADIUS_ROW, clip);
+                    frame.rect_clipped(shade(row), RADIUS_ROW, p.hover, clip);
                 }
                 let text = t!("git-stash-more", count = rest);
                 let x = row.x + STASH_TITLE;
@@ -108,7 +108,7 @@ pub(super) fn draw_stashes(
         );
         let selected = viewing == Some(stash.oid.as_str());
         if let Some(color) = row_color(p, selected, false, hovered) {
-            frame.rect_clipped(shade(row), color, RADIUS_ROW, clip);
+            frame.rect_clipped(shade(row), RADIUS_ROW, color, clip);
         }
         // 右端：平时是分支和时间，悬停时换成「应用」和「⋯」。
         let mut right = row.right() - END_PAD;
@@ -120,7 +120,7 @@ pub(super) fn draw_stashes(
             icons::more(frame, center(more), color, clip);
             hits.push((more, CommitTarget::StashMenu(i)));
             let text = t!("git-stash-apply");
-            let w = frame.measure(FontKind::Ui, size, text) + 2.0 * STASH_APPLY_PAD;
+            let w = frame.measure(Font::ui(size), text) + 2.0 * STASH_APPLY_PAD;
             let apply = Rect::new(more.x - BUTTON_GAP - w, more.y, w, more.h);
             let on = app.pointer.hover == Hover::Commit(CommitTarget::StashApply(i));
             draw_button(frame, p, apply, clip, on, false);
@@ -143,7 +143,7 @@ pub(super) fn draw_stashes(
             };
             let room = (right - row.x - STASH_TITLE) / 2.0;
             let meta = fit(frame, &meta, size, room.max(0.0), false);
-            let w = frame.measure(FontKind::Ui, size, &meta);
+            let w = frame.measure(Font::ui(size), &meta);
             ui_text_small(frame, app, right - w, row, &meta, p.text_dim, clip);
             right -= w + 8.0;
         }
@@ -173,20 +173,20 @@ pub(super) fn draw_peek_file(
     };
     let shade = Rect::new(row.x, row.y + 1.0, row.w, row.h - 2.0);
     if let Some(color) = row_color(p, at == view.at, false, hovered) {
-        frame.rect_clipped(shade, color, RADIUS_ROW, clip);
+        frame.rect_clipped(shade, RADIUS_ROW, color, clip);
     }
     let size = app.fonts.ui_small;
     let cy = row.y + row.h / 2.0;
     let name = winc_editor::display_name(&file.path).into_owned();
     draw_file_icon(frame, p, (x, cy), &name, clip);
     let letter = file.change.letter().to_string();
-    let letter_w = frame.measure(FontKind::Ui, size, &letter);
+    let letter_w = frame.measure(Font::ui(size), &letter);
     let right = row.right() - END_PAD;
     let ink = git_color(p, file.change);
     ui_text_small(frame, app, right - letter_w, row, &letter, ink, clip);
     let text_x = x + icons::FILE_WIDTH + 6.0;
     let room = (right - letter_w - 8.0 - text_x).max(0.0);
-    let name_w = frame.measure(FontKind::Ui, app.fonts.ui, &name).min(room);
+    let name_w = frame.measure(Font::ui(app.fonts.ui), &name).min(room);
     let shown = fit(frame, &name, app.fonts.ui, room, false);
     let color = file_color(file.change, p);
     let area = clip.intersect(Rect::new(text_x, row.y, room, row.h));

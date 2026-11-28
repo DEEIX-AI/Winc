@@ -276,7 +276,7 @@ fn a_heading_list_too_long_for_the_view_scrolls_by_the_wheel() {
     let row = find(&app, TocTarget::Heading(2)).unwrap();
     app.on_mouse_move(row.x + 30.0, row.y + row.h / 2.0);
     // 滚轮位移是物理像素。
-    let scale = app.frame.renderer.as_ref().unwrap().scale_factor();
+    let scale = app.frame.renderer.as_ref().unwrap().scale();
     let wheel = |app: &mut App, dy: f64| {
         let dy = dy * f64::from(scale);
         app.on_wheel(MouseScrollDelta::PixelDelta(PhysicalPosition::new(0.0, dy)));
