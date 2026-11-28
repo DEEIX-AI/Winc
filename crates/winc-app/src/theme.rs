@@ -16,9 +16,9 @@ pub use winc::*;
 use std::borrow::Cow;
 use std::time::Duration;
 
+use cpui_render::{Color, FontKind};
 use winc_config::BADGE_COLORS;
 use winc_core::text;
-use winc_render::Color;
 use winc_syntax::TokenKind;
 
 use crate::icons::FileGlyph;
@@ -593,6 +593,12 @@ pub const CODE_FONT: f32 = 12.0;
 /// 编辑区的行高按字号等比缩放，使字号变化后行距的比例不变；默认 12 号字的行高是 18。
 pub const LINE_HEIGHT_RATIO: f32 = 20.0 / 13.0;
 
+/// 终端文字的字体种类：`App::font_set` 注册的第一组字体。
+pub const TERMINAL_FONT: FontKind = FontKind::Custom(0);
+
+/// Markdown 预览正文的字体种类：注册的第二组字体。
+pub const PROSE_FONT: FontKind = FontKind::Custom(1);
+
 /// 运行期的字号和行高（逻辑像素）。
 ///
 /// 界面上每处文字都用这里的值，不直接使用上方的默认常量。
@@ -795,6 +801,8 @@ pub const SETTINGS_INSET: f32 = 14.0;
 pub const SETTINGS_GROUP_GAP: f32 = 16.0;
 /// 最后一组下方的留白。
 pub const SETTINGS_BOTTOM: f32 = 24.0;
+/// 「关于」页最后一组与下方版权声明之间的距离。
+pub const SETTINGS_FOOTER_GAP: f32 = 24.0;
 /// 一行的高度（名称下方没有说明文字时）。
 pub const SETTINGS_ROW: f32 = 40.0;
 /// 名称下方还有一行说明文字时的行高。

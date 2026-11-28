@@ -234,7 +234,7 @@ fn the_folder_menu_uses_the_same_icons_as_the_file_tree() {
                     }
                 }
             }
-            let image = Image {
+            let image = Snapshot {
                 pixels: sheet,
                 width: w * 5,
                 height: h,
@@ -535,8 +535,8 @@ fn long_crumbs_fold_to_keep_the_message() {
     let file = dir.join(&deep).join("settings.rs");
     std::fs::write(&file, "fn main() {}\n").unwrap();
     let mut app = app_with(&dir, false);
-    let narrow = Renderer::offscreen(800.0, 420.0, SCALE, app.palette.frame_bg, None, None);
-    app.frame.renderer = Some(narrow.unwrap());
+    let narrow = offscreen(&app, (800.0, 420.0), SCALE);
+    app.frame.renderer = Some(narrow);
     app.measure_fonts();
     let root = app.editor.workspace.as_ref().unwrap().root.clone();
     app.open_path(&root.join(&deep).join("settings.rs"));

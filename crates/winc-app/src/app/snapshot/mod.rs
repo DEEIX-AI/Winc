@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use winc_render::{Color, Frame, Image, Rect, Renderer};
+use cpui_render::{Color, Frame, Rect, Renderer, Snapshot};
 use winit::dpi::PhysicalPosition;
 use winit::event::{MouseButton, MouseScrollDelta};
 
@@ -109,16 +109,10 @@ fn app_with(path: &Path, dark: bool) -> App {
 /// 创建刚启动时的离屏界面：没有打开的目录，没有标签，没有历史记录。
 fn blank_app(dark: bool) -> App {
     let palette = Palette::for_dark(dark);
-    let mut app = App::new(
-        Editor::default(),
-        None,
-        Bench::from_env(),
-        Config::default(),
-    );
+    let mut app = App::for_test(Editor::default(), Config::default());
     app.palette = palette;
 
-    let renderer =
-        Renderer::offscreen(SIZE.0, SIZE.1, SCALE, palette.frame_bg, None, None).unwrap();
+    let renderer = offscreen(&app, SIZE, SCALE);
     app.frame.renderer = Some(renderer);
     app.measure_fonts();
     // 日志的测试按编辑区模式写：日志是编辑区的标签。Git 面板（默认的面板模式）由
@@ -126,6 +120,15 @@ fn blank_app(dark: bool) -> App {
     app.git.panel.docked = false;
     app.relayout();
     app
+}
+
+/// 创建离屏渲染器，逻辑尺寸为 `size`，底色为窗口底色。
+///
+/// 与真实窗口相同，渲染器与 `app` 共用字体；默认的字体设置里没有终端和预览正文的字体组。
+fn offscreen(app: &App, (w, h): (f32, f32), scale: f32) -> Renderer {
+    let mut renderer = Renderer::offscreen(w, h, scale, app.palette.frame_bg).unwrap();
+    renderer.set_font_system(app.frame.fonts.clone());
+    renderer
 }
 
 /// 返回文件树中第一个名字以 `prefix` 开头的行的行号（从 0 起）。
@@ -164,7 +167,7 @@ pub(super) fn paint(app: &mut App) {
 
 /// 返回画面上逻辑坐标 `(x, y)` 处的像素。
 fn pixel(app: &App, (x, y): (f32, f32)) -> u32 {
-    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+    let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
     let (x, y) = ((x * SCALE) as usize, (y * SCALE) as usize);
     image.pixels[y * image.width as usize + x]
 }
@@ -252,7 +255,7 @@ fn shoot(app: &mut App, name: &str) {
     );
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join(format!("{name}.png"));
-    write_png(&path, renderer.image().unwrap()).unwrap();
+    write_png(&path, renderer.snapshot().unwrap()).unwrap();
     app.frame.renderer = Some(renderer);
     eprintln!("{}", path.display());
 }
@@ -393,7 +396,7 @@ pub(super) fn click(app: &mut App, (x, y): (f32, f32)) {
 ///
 /// zlib 流只使用存储块（stored block，每块最多 `0xffff` 字节），无需压缩库；截图文件体积因此较大，
 /// 但测试场景可以接受。
-fn write_png(path: &Path, image: &Image) -> std::io::Result<()> {
+fn write_png(path: &Path, image: &Snapshot) -> std::io::Result<()> {
     let (w, h) = (image.width as usize, image.height as usize);
     let mut raw = Vec::with_capacity((w * 4 + 1) * h);
 

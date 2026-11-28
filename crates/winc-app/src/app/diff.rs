@@ -23,11 +23,11 @@ use std::time::Instant;
 use winc_core::diff::{Pick, StageLine};
 use winc_core::{Lines, Selection, movement};
 
+use cpui_render::Rect;
 use winc_editor::background;
 use winc_editor::diff_view::{Compared, DiffView, LEFT, RIGHT, ReadSelection, SideRow};
 use winc_editor::{Document, DocumentId, FoldCommand};
 use winc_i18n::t;
-use winc_render::Rect;
 use winit::keyboard::{Key, NamedKey};
 
 use super::animation::{Clock, FOLD_ANIMATION};

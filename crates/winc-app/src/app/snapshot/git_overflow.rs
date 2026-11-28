@@ -37,7 +37,7 @@ fn long_change_app(name: &str, flat: bool, dark: bool) -> (App, PathBuf, CommitN
 }
 
 fn pixels_beside_row(app: &App, row: Rect) -> Vec<u32> {
-    let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+    let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
     let left = ((app.layout.sidebar.right() + 12.0) * SCALE) as usize;
     let right = (left + 600).min(image.width as usize - 12);
     let top = (row.y * SCALE) as usize;

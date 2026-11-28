@@ -1075,14 +1075,12 @@ fn the_focus_ring_has_even_sides_at_any_scale() {
     app.press_panel_button(PanelButton::Expand);
     app.focus = Focus::GlobalReplace;
     for scale in [0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.2] {
-        let bg = app.palette.frame_bg;
-        let renderer = winc_render::Renderer::offscreen(SIZE.0, SIZE.1, scale, bg, None, None);
-        app.frame.renderer = Some(renderer.unwrap());
+        app.frame.renderer = Some(offscreen(&app, SIZE, scale));
         // 每轮加宽侧栏 0.3 逻辑像素，使输入框的边落在非整数的物理像素上。
         app.panels.sidebar.width += 0.3;
         paint(&mut app);
         let field = app.panel_parts().replace;
-        let image = app.frame.renderer.as_ref().unwrap().image().unwrap();
+        let image = app.frame.renderer.as_ref().unwrap().snapshot().unwrap();
         let accent = app.palette.accent;
         let target = [accent.r, accent.g, accent.b].map(|c| (c * 255.0).round() as i32);
         let lit = |x: i32, y: i32| {

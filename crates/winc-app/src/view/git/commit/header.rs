@@ -71,10 +71,10 @@ pub(super) fn context_widths(app: &App, frame: &mut Frame<'_>, row: Rect) -> (f3
     }
     let size = app.fonts.ui_small;
     let right = row.right() - if sync > 0.0 { sync + BUTTON_GAP } else { 0.0 };
-    let head = frame.measure(FontKind::Ui, size, &head_label(app));
+    let head = frame.measure(Font::ui(size), &head_label(app));
     let branch = LOCATION_LEAD.1 + head + CONTEXT_PICK_TAIL;
     let button = |text: f32| LOCATION_PICK_LEAD.1 + text + CONTEXT_PICK_PAD;
-    let full = button(frame.measure(FontKind::Ui, size, &app.git_current_repository_name()));
+    let full = button(frame.measure(Font::ui(size), &app.git_current_repository_name()));
     let kept = full
         .min((right - row.x) * LOCATION_SHARE)
         .max(button(LOCATION_MIN_TEXT));
@@ -112,7 +112,7 @@ pub(super) fn draw_context_pick(
     let room = (right - row.x - room_left - tail).max(0.0);
     let full: f32 = names
         .iter()
-        .map(|(text, _)| frame.measure(FontKind::Ui, size, text))
+        .map(|(text, _)| frame.measure(Font::ui(size), text))
         .sum();
     let pick = Rect::new(row.x, row.y, room_left + full.min(room) + tail, row.h);
     let hovered = app.pointer.hover == Hover::Commit(target);
@@ -197,7 +197,7 @@ pub(super) fn draw_branch_row(
         );
         // 分隔符和分支按钮跟着过渡中的宽度走，名字比它短时也不提前靠拢。
         let end = (row.x + location).min(right);
-        let slash = frame.measure(FontKind::Ui, size, "/");
+        let slash = frame.measure(Font::ui(size), "/");
         let at = end + (PATH_SEPARATOR - slash) / 2.0;
         label(frame, app, size, (at, row), "/", p.text_dim, clip);
         let left = end + PATH_SEPARATOR;
@@ -266,7 +266,7 @@ fn sync_width(app: &App, frame: &mut Frame<'_>) -> Option<f32> {
     let text = if counts.is_empty() {
         0.0
     } else {
-        SYNC_TEXT_LEFT + frame.measure(FontKind::Ui, app.fonts.ui_small, &counts)
+        SYNC_TEXT_LEFT + frame.measure(Font::ui(app.fonts.ui_small), &counts)
     };
     sync_shown(app).then_some(text + BUTTON_SMALL)
 }
@@ -361,7 +361,7 @@ pub(super) fn draw_banner(
     } else {
         p.accent
     };
-    frame.rounded(rect, tint.alpha(0.12), RADIUS_ROW);
+    frame.rounded(rect, RADIUS_ROW, tint.alpha(0.12));
     // 变基时写明进度：正在处理第几个提交，共几个。
     let op = match status.progress {
         Some((at, total)) => format!("{} {at}/{total}", operation.label()),
@@ -383,7 +383,7 @@ pub(super) fn draw_banner(
     ui_text_small(frame, app, x, rect, &text, p.text, clip.intersect(room));
     let hovered = app.pointer.hover == Hover::Commit(CommitTarget::Abort);
     draw_button(frame, p, abort, clip, hovered, false);
-    let w = frame.measure(FontKind::Ui, size, t!("git-operation-abort"));
+    let w = frame.measure(Font::ui(size), t!("git-operation-abort"));
     let color = if hovered { p.text } else { p.text_muted };
     let text_x = (abort.x + (abort.w - w) / 2.0).round();
     ui_text_small(
@@ -423,7 +423,7 @@ pub(super) fn draw_undo(
     let p = app.palette;
     let clip = app.layout.sidebar.intersect(bar);
     if parts.card.is_none() {
-        frame.rect_clipped(Rect::new(bar.x, bar.y, bar.w, 1.0), p.separator, 0.0, clip);
+        frame.rect_clipped(Rect::new(bar.x, bar.y, bar.w, 1.0), 0.0, p.separator, clip);
     }
     let left = parts.branch.x;
     let row = Rect::new(left, more.y, more.right() - left, more.h);
@@ -432,7 +432,7 @@ pub(super) fn draw_undo(
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs() as i64);
     let time = display_local(&last.local, last.time, now);
-    let time_w = frame.measure(FontKind::Ui, size, &time);
+    let time_w = frame.measure(Font::ui(size), &time);
     let time_x = (undo.x - 6.0 - time_w).max(row.x);
     ui_text_small(frame, app, time_x, row, &time, p.text_dim, clip);
     let room = Rect::new(row.x, row.y, (time_x - 8.0 - row.x).max(0.0), row.h);
@@ -462,7 +462,7 @@ pub(super) fn draw_undo(
     let hovered = app.pointer.hover == Hover::Commit(CommitTarget::Undo);
     draw_button(frame, p, undo, clip, hovered, false);
     let text = t!("git-commit-undo");
-    let w = frame.measure(FontKind::Ui, size, text);
+    let w = frame.measure(Font::ui(size), text);
     let x = (undo.x + (undo.w - w) / 2.0).round();
     let ink = if hovered { p.accent } else { p.text_muted };
     ui_text_small(frame, app, x, undo, text, ink, clip);

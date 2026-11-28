@@ -19,7 +19,7 @@ pub(in crate::view) fn popup_value(
 ) {
     let p = app.palette;
     if hovered {
-        frame.rect_clipped(rect, p.hover, RADIUS_ROW, clip);
+        frame.rect_clipped(rect, RADIUS_ROW, p.hover, clip);
     }
     let area = Rect::new(
         rect.x + 10.0,
@@ -32,7 +32,7 @@ pub(in crate::view) fn popup_value(
 
     let room = Rect::new(area.x, area.y, (area.w - 16.0).max(0.0), area.h);
     let text = ellipsize(frame, text, app.fonts.ui, room.w);
-    let w = frame.measure(FontKind::Ui, app.fonts.ui, &text);
+    let w = frame.measure(Font::ui(app.fonts.ui), &text);
     let color = if dim { p.text_dim } else { p.text_muted };
     ui_text(frame, app, room.right() - w, room, &text, color, room);
 }
@@ -42,15 +42,15 @@ pub(in crate::view) fn popup_value(
 /// `t` 是开启程度：0 为关闭，1 为开启，切换途中在两者之间，圆钮和强调色随之过渡。
 pub(in crate::view) fn switch(frame: &mut Frame<'_>, p: &Palette, track: Rect, t: f32, clip: Rect) {
     let radius = track.h / 2.0;
-    frame.rect_clipped(track, p.switch_off, radius, clip);
+    frame.rect_clipped(track, radius, p.switch_off, clip);
     if t > 0.0 {
-        frame.rect_clipped(track, p.accent.alpha(p.accent.a * t), radius, clip);
+        frame.rect_clipped(track, radius, p.accent.alpha(p.accent.a * t), clip);
     }
     let knob = track.h - 4.0;
     let left = track.x + 2.0;
     let x = left + (track.right() - 2.0 - knob - left) * t;
     let knob = Rect::new(x, track.y + 2.0, knob, knob);
-    frame.rect_clipped(knob, p.switch_knob, knob.h / 2.0, clip);
+    frame.rect_clipped(knob, knob.h / 2.0, p.switch_knob, clip);
 }
 
 /// 绘制分段控件的底槽 `track` 和其中凸起的一段 `slot`（没有选中项时为 `None`），各段的文字由
@@ -63,11 +63,11 @@ pub(in crate::view) fn segment_track(
     slot: Option<Rect>,
     clip: Rect,
 ) {
-    frame.rect_clipped(track, p.hover, RADIUS_ROW + 2.0, clip);
+    frame.rect_clipped(track, RADIUS_ROW + 2.0, p.hover, clip);
     let track_bg = super::workspace::panel::over(under, p.hover);
     let (raised, edge) = super::workspace::panel::segment_colors(p, track_bg);
     if let Some(slot) = slot {
-        frame.rect_clipped(slot, edge, RADIUS_ROW, clip);
-        frame.rect_clipped(slot.inset(0.5, 0.5), raised, RADIUS_ROW - 0.5, clip);
+        frame.rect_clipped(slot, RADIUS_ROW, edge, clip);
+        frame.rect_clipped(slot.inset(0.5, 0.5), RADIUS_ROW - 0.5, raised, clip);
     }
 }

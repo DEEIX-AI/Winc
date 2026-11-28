@@ -106,128 +106,76 @@ impl FileGlyph {
     ];
 }
 
-/// 绘制目录图标，15×12：线条风格，笔宽 `STROKE`，与顶栏图标一致。
+/// 绘制目录图标，15×12，左上角在 `(x, y)`：线条风格，笔宽 `STROKE`，与顶栏图标一致。
 ///
-/// 左上一个标签，下面是圆角的
-/// 夹子。
-///
-/// 打开时前片向前倾倒：后片的右边只画到前片上沿，前片是一个上宽下窄的平行四边形，左下角和
-/// 后片合在一起。
+/// 打开时前片向前倾倒。
 pub fn folder(frame: &mut Frame<'_>, (x, y): (f32, f32), open: bool, color: Color, clip: Rect) {
-    let h = STROKE / 2.0;
-    // 线画在框里：外沿正好是 15×12。
-    let (l, t, r, b) = (x + h, y + h, x + 15.0 - h, y + 12.0 - h);
-    let c = 2.0;
-    let tab_end = l + 5.0;
-    let lid = t + 2.0;
-    let mut shapes: Strokes<12> = Strokes::new();
-    shapes.extend([
-        // 左边、左上角、标签（上沿到斜口）。
-        Stroke::Line(l, b - c, l, t + c),
-        Stroke::Arc(l + c, t + c, c, -PI, -FRAC_PI_2),
-        Stroke::Line(l + c, t, tab_end, t),
-        Stroke::Line(tab_end, t, tab_end + 1.5, lid),
-        Stroke::Line(tab_end + 1.5, lid, r - c, lid),
-        Stroke::Arc(r - c, lid + c, c, -FRAC_PI_2, 0.0),
-    ]);
-    if open {
-        // 后片的右边只到前片上沿；前片上沿往右伸出去一点，右边斜着收到底。
-        let front = lid + 3.0;
-        shapes.extend([
-            Stroke::Line(r, lid + c, r, front),
-            Stroke::Line(l + 2.75, front, r + 0.25, front),
-            Stroke::Line(r + 0.25, front, r - 2.0, b),
-            Stroke::Line(r - 2.0, b, l + c, b),
-            Stroke::Arc(l + c, b - c, c, FRAC_PI_2, PI),
-            Stroke::Line(l + 2.75, front, l + 0.4, b - 0.75),
-        ]);
-    } else {
-        shapes.extend([
-            Stroke::Line(r, lid + c, r, b - c),
-            Stroke::Arc(r - c, b - c, c, 0.0, FRAC_PI_2),
-            Stroke::Line(r - c, b, l + c, b),
-            Stroke::Arc(l + c, b - c, c, FRAC_PI_2, PI),
-        ]);
-    }
-    frame.stroke(shapes.as_slice(), STROKE, color, clip);
+    let icon = if open { Icon::FolderOpen } else { Icon::Folder };
+    draw(
+        frame,
+        icon,
+        (x + 7.5, y + 6.0),
+        FOLDER_WIDTH,
+        STROKE,
+        color,
+        clip,
+    );
 }
 
 /// 绘制一组目录的图标，15×12，左上角在 `(x, y)`：下面一个圆角矩形，上面两道逐渐变短的横线，
 /// 表示叠在一起的多个目录。
 pub fn folders(frame: &mut Frame<'_>, (x, y): (f32, f32), color: Color, clip: Rect) {
-    let h = STROKE / 2.0;
-    // 矩形高 7.5，贴着下沿；两道横线各比下面一层每侧短 2，相隔 2。
-    let front = rounded_outline(x + h, y + 4.5 + h, 15.0 - STROKE, 7.5 - STROKE, 2.0);
-    let layers = [
-        Stroke::Line(x + 2.0 + h, y + 2.0 + h, x + 13.0 - h, y + 2.0 + h),
-        Stroke::Line(x + 4.0 + h, y + h, x + 11.0 - h, y + h),
-    ];
-    frame.stroke(&front, STROKE, color, clip);
-    frame.stroke(&layers, STROKE, color, clip);
+    draw(
+        frame,
+        Icon::Folders,
+        (x + 7.5, y + 6.0),
+        FOLDER_WIDTH,
+        STROKE,
+        color,
+        clip,
+    );
 }
 
-/// 绘制符号链接的角标，以 `(cx, cy)` 为中心：底色 `bg` 的圆片上一个指向右上的箭头。
+/// 绘制符号链接的角标，以 `(cx, cy)` 为中心：露出底面 `surface` 的圆片上一个指向右上的箭头。
+///
+/// `highlight` 是所在行的高亮，铺在圆片上，与行的底色一致。
 pub fn link_badge(
     frame: &mut Frame<'_>,
     (cx, cy): (f32, f32),
-    bg: Color,
+    (surface, highlight): (Color, Option<Color>),
     color: Color,
     clip: Rect,
 ) {
     let r = 4.5;
-    frame.rect_clipped(Rect::new(cx - r, cy - r, r * 2.0, r * 2.0), bg, r, clip);
-    let (a, head) = (2.0, 2.75);
-    let shapes = [
-        Stroke::Line(cx - a, cy + a, cx + a, cy - a),
-        Stroke::Line(cx + a, cy - a, cx + a - head, cy - a),
-        Stroke::Line(cx + a, cy - a, cx + a, cy - a + head),
-    ];
-    frame.stroke(&shapes, STROKE, color, clip);
+    let disc = Rect::new(cx - r, cy - r, r * 2.0, r * 2.0);
+    frame.surface_clipped(disc, r, surface, clip);
+    if let Some(highlight) = highlight {
+        frame.rect_clipped(disc, r, highlight, clip);
+    }
+    // 箭头横竖各 4 逻辑像素，在网格上占 14 格。
+    draw(
+        frame,
+        Icon::Symlink,
+        (cx, cy),
+        fit(4.0, 14.0),
+        STROKE,
+        color,
+        clip,
+    );
 }
 
-/// 绘制小号目录图标，12×10，以 `(cx, cy)` 为中心：形状和合上的 [`folder`] 相同，线条和小号分支
-/// 图标一样细，用于侧栏小号文字旁。
-pub fn folder_small(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Rect) {
+/// 绘制小号目录图标，约 12×10，以 `(cx, cy)` 为中心：合上的 [`folder`] 按宽度缩小，线条和小号
+/// 分支图标一样细，用于侧栏小号文字旁。
+pub fn folder_small(frame: &mut Frame<'_>, center: (f32, f32), color: Color, clip: Rect) {
     const WIDTH: f32 = 1.25;
-    let h = WIDTH / 2.0;
-    let (l, t, r, b) = (cx - 6.0 + h, cy - 5.0 + h, cx + 6.0 - h, cy + 5.0 - h);
-    let c = 1.5;
-    let tab_end = l + 4.0;
-    let lid = t + 1.5;
-    let shapes = [
-        Stroke::Line(l, b - c, l, t + c),
-        Stroke::Arc(l + c, t + c, c, -PI, -FRAC_PI_2),
-        Stroke::Line(l + c, t, tab_end, t),
-        Stroke::Line(tab_end, t, tab_end + 1.25, lid),
-        Stroke::Line(tab_end + 1.25, lid, r - c, lid),
-        Stroke::Arc(r - c, lid + c, c, -FRAC_PI_2, 0.0),
-        Stroke::Line(r, lid + c, r, b - c),
-        Stroke::Arc(r - c, b - c, c, 0.0, FRAC_PI_2),
-        Stroke::Line(r - c, b, l + c, b),
-        Stroke::Arc(l + c, b - c, c, FRAC_PI_2, PI),
-    ];
-    frame.stroke(&shapes, WIDTH, color, clip);
+    draw(frame, Icon::Folder, center, 12.0, WIDTH, color, clip);
 }
 
 /// 绘制小号工作树图标，12×12，以 `(cx, cy)` 为中心：左上、右下各一个圆角方框，由一道折线
 /// 相连，表示从同一个仓库另外签出的目录。线条和小号分支图标一样细。
-pub fn worktree_small(frame: &mut Frame<'_>, (cx, cy): (f32, f32), color: Color, clip: Rect) {
+pub fn worktree_small(frame: &mut Frame<'_>, center: (f32, f32), color: Color, clip: Rect) {
     const WIDTH: f32 = 1.25;
-    // 方框 5 见方，圆角 1.5；两个方框横竖各隔 0.75。
-    let (side, h) = (5.0, WIDTH / 2.0);
-    let (near, far) = (-6.0 + h, 6.0 - h - side);
-    let first = rounded_outline(cx + near, cy + near, side, side, 1.5);
-    let second = rounded_outline(cx + far, cy + far, side, side, 1.5);
-    // 折线：从第一个方框底边的中点往下，拐一个圆角，接到第二个方框左边的中点。
-    let (x, y, c) = (cx + near + side / 2.0, cy + far + side / 2.0, 1.5);
-    let link = [
-        Stroke::Line(x, cy + near + side, x, y - c),
-        Stroke::Arc(x + c, y - c, c, FRAC_PI_2, PI),
-        Stroke::Line(x + c, y, cx + far, y),
-    ];
-    frame.stroke(&first, WIDTH, color, clip);
-    frame.stroke(&second, WIDTH, color, clip);
-    frame.stroke(&link, WIDTH, color, clip);
+    draw(frame, Icon::Worktree, center, 12.0, WIDTH, color, clip);
 }
 
 /// 绘制「新建文件」图标，占 12×15 的位置（左上角 `(x, y)`）：和文件树工具栏的 [`add_file`] 是
@@ -240,7 +188,7 @@ pub fn new_file(frame: &mut Frame<'_>, (x, y): (f32, f32), color: Color, clip: R
 
 /// 绘制描边的文档图标，大小为 `w`×`h`：右上角折起，其余三个角是小圆角。
 ///
-/// 用于无法预览的文件的占位页。
+/// 用于无法预览的文件的占位页。圆角不随大小缩放，因此不用图标集里按比例缩放的 [`Icon::File`]。
 pub fn document(
     frame: &mut Frame<'_>,
     (x, y): (f32, f32),
@@ -271,298 +219,49 @@ pub fn document(
 /// 一样大，笔宽 `STROKE`；文档类（`Text`、`Binary`、`Plain`）在记号外加一张折角的纸。
 ///
 /// 记号就是这个图标的全部内容，不套纸的轮廓，否则一列文件里只剩一排相同的灰框，类型反而看不清。
+/// 除语言缩写外，记号都来自图标集。
 pub fn file(frame: &mut Frame<'_>, (x, y): (f32, f32), glyph: FileGlyph, color: Color, clip: Rect) {
     // 记号居中在 12×15 这块位置里。
     let (cx, cy) = (x + FILE_WIDTH / 2.0, y + 7.5);
     let k = MARK_SCALE;
-    let line = |x0: f32, y0: f32, x1: f32, y1: f32| {
-        Stroke::Line(cx + x0 * k, cy + y0 * k, cx + x1 * k, cy + y1 * k)
-    };
-    // 文档类（文字、二进制、没认出来的）外面是一张折角的纸，约 10×13。
-    let page = |frame: &mut Frame<'_>| {
-        // 和侧栏开关一样高（12），一行里的图标上下沿齐平。
-        let (w, h) = (9.5, 12.0);
-        document(frame, (cx - w / 2.0, cy - h / 2.0), (w, h), color, clip);
-    };
-
-    match glyph {
-        FileGlyph::Code => {
-            let marks = [
-                line(-1.25, -2.5, -3.5, 0.0),
-                line(-3.5, 0.0, -1.25, 2.5),
-                line(1.25, -2.5, 3.5, 0.0),
-                line(3.5, 0.0, 1.25, 2.5),
-            ];
-            frame.stroke(&marks, STROKE, color, clip);
-        }
-        FileGlyph::Text => {
-            // 文档有纸：折角的纸，纸上三行字（最后一行短）。
-            page(frame);
-            let row = |dy: f32, w: f32| Stroke::Line(cx - 2.5, cy + dy, cx - 2.5 + w, cy + dy);
-            let marks = [row(-1.5, 5.0), row(1.0, 5.0), row(3.5, 3.25)];
-            frame.stroke(&marks, STROKE, color, clip);
-        }
-        FileGlyph::Data => {
-            // 零长度的线段画出来就是圆点。
-            let keys = [
-                line(-2.75, -1.5, -2.75, -1.5),
-                line(-2.75, 1.75, -2.75, 1.75),
-            ];
-            let values = [line(-0.5, -1.5, 3.0, -1.5), line(-0.5, 1.75, 2.0, 1.75)];
-            frame.stroke(&keys, DOT, color, clip);
-            frame.stroke(&values, STROKE, color, clip);
-        }
-        FileGlyph::Shell => {
-            let marks = [
-                line(-3.25, -2.25, -1.0, 0.0),
-                line(-1.0, 0.0, -3.25, 2.25),
-                line(0.5, 2.25, 3.25, 2.25),
-            ];
-            frame.stroke(&marks, STROKE, color, clip);
-        }
-        FileGlyph::Image => {
-            // 一个圆角的相框，里面山和太阳；山脚落在框的底边上。
-            let frame_outline = rounded_outline(cx - 3.5 * k, cy - 3.25 * k, 7.0 * k, 6.5 * k, 1.5);
-            let mountains = [
-                line(-3.5, 2.5, -1.0, -0.25),
-                line(-1.0, -0.25, 1.0, 1.75),
-                line(1.0, 1.75, 2.0, 0.75),
-                line(2.0, 0.75, 3.5, 2.25),
-            ];
-            let marks: Strokes<12> = joined(&[&frame_outline, &mountains]);
-            frame.stroke(marks.as_slice(), STROKE, color, clip);
-            frame.stroke(&[line(1.5, -1.5, 1.5, -1.5)], DOT - 0.4, color, clip);
-        }
-        FileGlyph::Archive => {
-            // 一个圆角的盒子，中间一条拉链：齿左右交错，下面是拉头。
-            let case = rounded_outline(cx - 3.5 * k, cy - 3.5 * k, 7.0 * k, 7.0 * k, 1.5);
-            let teeth = [
-                line(-0.6, -3.5, 0.0, -3.5),
-                line(-0.6, -2.25, 0.6, -2.25),
-                line(-0.6, -1.0, 0.6, -1.0),
-            ];
-            let marks: Strokes<11> = joined(&[&case, &teeth]);
-            frame.stroke(marks.as_slice(), STROKE, color, clip);
-            let pull = Rect::new(cx - 1.0 * k, cy + 0.5 * k, 2.0 * k, 2.25 * k);
-            frame.rect_corners(pull, color, [0.75; 4], clip);
-        }
-        FileGlyph::Audio => {
-            let marks = [line(0.75, 2.0, 0.75, -3.25), line(0.75, -3.25, 3.0, -2.25)];
-            frame.stroke(&marks, STROKE, color, clip);
-            frame.stroke(&[line(-0.9, 2.25, -0.9, 2.25)], DOT + 1.0, color, clip);
-        }
-        FileGlyph::Video => {
-            // 圆角的画面框，里面一个播放三角。
-            let screen = rounded_outline(cx - 3.5 * k, cy - 3.0 * k, 7.0 * k, 6.0 * k, 1.5);
-            let play = [
-                line(-1.0, -1.5, -1.0, 1.5),
-                line(-1.0, -1.5, 1.75, 0.0),
-                line(1.75, 0.0, -1.0, 1.5),
-            ];
-            let marks: Strokes<11> = joined(&[&screen, &play]);
-            frame.stroke(marks.as_slice(), STROKE, color, clip);
-        }
-        FileGlyph::Font => {
-            let marks = [
-                line(-3.25, 3.0, 0.0, -3.25),
-                line(0.0, -3.25, 3.25, 3.0),
-                line(-1.75, 0.75, 1.75, 0.75),
-            ];
-            frame.stroke(&marks, STROKE, color, clip);
-        }
-        FileGlyph::Binary => {
-            // 折角的纸，纸上两行点，每行三个。零长度的线段画出来就是圆点。
-            page(frame);
-            let dot = |x: f32, y: f32| Stroke::Line(cx + x, cy + y, cx + x, cy + y);
-            let dots = [
-                dot(-2.25, -0.25),
-                dot(0.0, -0.25),
-                dot(2.25, -0.25),
-                dot(-2.25, 2.5),
-                dot(0.0, 2.5),
-                dot(2.25, 2.5),
-            ];
-            frame.stroke(&dots, 1.75, color, clip);
-        }
-        FileGlyph::Lock => {
-            frame.stroke(
-                &[
-                    Stroke::Arc(cx, cy - 1.25 * k, 1.75 * k, -PI, 0.0),
-                    line(-1.75, -1.25, -1.75, 0.0),
-                    line(1.75, -1.25, 1.75, 0.0),
-                ],
-                STROKE,
-                color,
-                clip,
-            );
-            let body = rounded_outline(cx - 3.0 * k, cy, 6.0 * k, 3.75 * k, 1.0);
-            frame.stroke(&body, STROKE, color, clip);
-        }
-        FileGlyph::Json => {
-            // 两个花括号：竖着的一笔中间向外顶出一个尖。
-            let brace = |s: f32| {
-                [
-                    line(s * 1.0, -3.5, s * 2.0, -3.0),
-                    line(s * 2.0, -3.0, s * 2.0, -0.75),
-                    line(s * 2.0, -0.75, s * 3.0, 0.0),
-                    line(s * 3.0, 0.0, s * 2.0, 0.75),
-                    line(s * 2.0, 0.75, s * 2.0, 3.0),
-                    line(s * 2.0, 3.0, s * 1.0, 3.5),
-                ]
-            };
-            frame.stroke(&brace(-1.0), STROKE, color, clip);
-            frame.stroke(&brace(1.0), STROKE, color, clip);
-        }
-        FileGlyph::Markdown => {
-            // 井号的两竖略向右倾。
-            let marks = [
-                line(-0.75, -3.25, -1.5, 3.25),
-                line(1.75, -3.25, 1.0, 3.25),
-                line(-3.0, -1.25, 3.25, -1.25),
-                line(-3.25, 1.25, 3.0, 1.25),
-            ];
-            frame.stroke(&marks, STROKE, color, clip);
-        }
-        FileGlyph::Docker => {
-            // 下面三个、上面两个集装箱（实心小方块），底下一道船身。
-            let box_at = |dx: f32, dy: f32| {
-                let s = 2.0 * k;
-                Rect::new(cx + dx * k - s / 2.0, cy + dy * k - s / 2.0, s, s)
-            };
-            for (dx, dy) in [
-                (-2.4, 0.6),
-                (0.0, 0.6),
-                (2.4, 0.6),
-                (-1.2, -1.8),
-                (1.2, -1.8),
-            ] {
-                frame.rect_clipped(box_at(dx, dy), color, 0.4, clip);
-            }
-            frame.stroke(&[line(-3.5, 3.0, 3.5, 3.0)], STROKE, color, clip);
-        }
-        FileGlyph::Git => {
-            // 和 [`branch_shape`] 同一个图形：主干、两个提交、一道四分之一圆弧。
-            let node = 1.1;
-            let (top, base) = ((2.25, -2.25), (-2.25, 2.25));
-            let p = |(x, y): (f32, f32)| (cx + x * k, cy + y * k);
-            let (tx, ty) = p(top);
-            let (bx, by) = p(base);
-            let (ax, ay) = p((base.0 + node, top.1 + node));
-            let marks = [
-                line(-2.25, -3.75, -2.25, base.1 - node),
-                Stroke::Circle(tx, ty, node * k),
-                Stroke::Circle(bx, by, node * k),
-                Stroke::Arc(ax, ay, (top.0 - base.0 - node) * k, 0.0, FRAC_PI_2),
-            ];
-            frame.stroke(&marks, STROKE, color, clip);
-        }
-        FileGlyph::License => {
-            let (bx, by) = (cx, cy - 1.0 * k);
-            let marks = [
-                Stroke::Circle(bx, by, 2.25 * k),
-                line(-1.1, 1.0, -1.75, 3.5),
-                line(1.1, 1.0, 1.75, 3.5),
-            ];
-            frame.stroke(&marks, STROKE, color, clip);
-        }
-        FileGlyph::Info => {
-            frame.stroke(&[line(0.0, -3.0, 0.0, -3.0)], DOT, color, clip);
-            let marks = [
-                line(-1.0, -0.75, 0.0, -0.75),
-                line(0.0, -0.75, 0.0, 3.0),
-                line(-1.25, 3.0, 1.25, 3.0),
-            ];
-            frame.stroke(&marks, STROKE, color, clip);
-        }
-        FileGlyph::Key => {
-            let (rx, ry) = (cx - 1.5 * k, cy - 1.5 * k);
-            let marks = [
-                Stroke::Circle(rx, ry, 1.6 * k),
-                line(-0.35, -0.35, 3.0, 3.0),
-                line(1.75, 1.75, 2.75, 0.75),
-            ];
-            frame.stroke(&marks, STROKE, color, clip);
-        }
-        FileGlyph::Package => {
-            let marks = [
-                line(0.0, -3.5, 3.0, -1.75),
-                line(3.0, -1.75, 3.0, 1.75),
-                line(3.0, 1.75, 0.0, 3.5),
-                line(0.0, 3.5, -3.0, 1.75),
-                line(-3.0, 1.75, -3.0, -1.75),
-                line(-3.0, -1.75, 0.0, -3.5),
-                line(-3.0, -1.75, 0.0, 0.0),
-                line(0.0, 0.0, 3.0, -1.75),
-                line(0.0, 0.0, 0.0, 3.5),
-            ];
-            frame.stroke(&marks, STROKE, color, clip);
-        }
-        FileGlyph::Table => {
-            let marks = [
-                line(-3.25, -3.0, 3.25, -3.0),
-                line(3.25, -3.0, 3.25, 3.0),
-                line(3.25, 3.0, -3.25, 3.0),
-                line(-3.25, 3.0, -3.25, -3.0),
-                line(-3.25, -0.75, 3.25, -0.75),
-                line(-3.25, 1.25, 3.25, 1.25),
-                line(-0.5, -3.0, -0.5, 3.0),
-            ];
-            frame.stroke(&marks, STROKE, color, clip);
-        }
-        FileGlyph::Database => {
-            // 圆柱：上面一个整椭圆，下面半个，两边两道竖线（中间不再加一圈，小图里太挤）。
-            let (rx, ry) = (3.0, 1.2);
-            // 椭圆弧用 10 段折线逼近。
-            let ellipse = |y: f32, from: f32, to: f32| -> [Stroke; 10] {
-                let at = |t: f32| {
-                    let a = from + (to - from) * t;
-                    (rx * a.cos(), y + ry * a.sin())
-                };
-                std::array::from_fn(|i| {
-                    let (x0, y0) = at(i as f32 / 10.0);
-                    let (x1, y1) = at((i + 1) as f32 / 10.0);
-                    line(x0, y0, x1, y1)
-                })
-            };
-            let sides = [line(-rx, -2.5, -rx, 2.5), line(rx, -2.5, rx, 2.5)];
-            let marks: Strokes<22> = joined(&[
-                &ellipse(-2.5, 0.0, 2.0 * PI),
-                &ellipse(2.5, 0.0, PI),
-                &sides,
-            ]);
-            frame.stroke(marks.as_slice(), STROKE, color, clip);
-        }
+    // 记号的设计稿是 ±3.5 的格子，在图标集里占 18 格。
+    let mark = 7.0 * k;
+    // 文档类的纸和侧栏开关一样高（12），一行里的图标上下沿齐平。
+    let page = 12.0;
+    let (icon, center, extent) = match glyph {
         FileGlyph::Letters(text) => {
             frame.stroke(monogram(text, (cx, cy)).as_slice(), STROKE, color, clip);
+            return;
         }
-        FileGlyph::Java => {
-            // 杯身上宽下窄，右边一个杯把，杯口上方两缕热气。
-            let marks = [
-                line(-3.25, -0.5, 1.75, -0.5),
-                line(-3.25, -0.5, -2.5, 3.0),
-                line(-2.5, 3.0, 1.0, 3.0),
-                line(1.0, 3.0, 1.75, -0.5),
-                Stroke::Arc(cx + 2.0 * k, cy + 0.9 * k, 1.1 * k, -FRAC_PI_2, FRAC_PI_2),
-                line(-1.6, -2.0, -1.0, -3.0),
-                line(-1.0, -3.0, -1.6, -4.0),
-                line(0.3, -2.0, 0.9, -3.0),
-                line(0.9, -3.0, 0.3, -4.0),
-            ];
-            frame.stroke(&marks, STROKE, color, clip);
-        }
-        FileGlyph::Config => {
-            frame.stroke(&gear_shape((cx, cy), (4.1, 5.7, 1.6)), STROKE, color, clip);
-        }
-        // 没认出来的类型：一张空白的折角的纸。
-        FileGlyph::Project => {
-            // 下面一个圆角矩形，上面两道逐渐变短的横线。
-            let front = rounded_outline(cx - 3.5 * k, cy - 0.25 * k, 7.0 * k, 3.75 * k, 1.5);
-            let layers = [line(-2.5, -1.75, 2.5, -1.75), line(-1.5, -3.25, 1.5, -3.25)];
-            frame.stroke(&front, STROKE, color, clip);
-            frame.stroke(&layers, STROKE, color, clip);
-        }
-        FileGlyph::Plain => page(frame),
-    }
+        FileGlyph::Code => (Icon::AngleBrackets, (cx, cy), mark),
+        FileGlyph::Text => (Icon::FileText, (cx, cy), page),
+        FileGlyph::Data => (Icon::KeyValue, (cx, cy), mark),
+        FileGlyph::Shell => (Icon::Prompt, (cx, cy), mark),
+        FileGlyph::Image => (Icon::Image, (cx, cy), mark),
+        FileGlyph::Archive => (Icon::Zipper, (cx, cy), mark),
+        FileGlyph::Audio => (Icon::MusicNote, (cx, cy), mark),
+        FileGlyph::Video => (Icon::PlaySquare, (cx, cy), mark),
+        FileGlyph::Font => (Icon::Font, (cx, cy), mark),
+        FileGlyph::Binary => (Icon::FileBinary, (cx, cy), page),
+        FileGlyph::Lock => (Icon::Lock, (cx, cy), fit(6.0 * k, 16.0)),
+        FileGlyph::Json => (Icon::Braces, (cx, cy), SYMBOL),
+        // 齿顶半径 5.7，在图标集里是 9 格。
+        FileGlyph::Config => (Icon::Gear, (cx, cy), fit(5.7, 9.0)),
+        FileGlyph::Markdown => (Icon::Hash, (cx, cy), fit(6.5 * k, 16.0)),
+        FileGlyph::Docker => (Icon::Containers, (cx, cy), mark),
+        // 两个提交相距 4.5，在图标集里是 12 格。
+        FileGlyph::Git => (Icon::GitBranch, (cx, cy), fit(4.5 * k, 12.0)),
+        FileGlyph::License => (Icon::Award, (cx, cy), mark),
+        FileGlyph::Info => (Icon::InfoLetter, (cx, cy), mark),
+        FileGlyph::Key => (Icon::Key, (cx, cy), mark),
+        FileGlyph::Package => (Icon::Cube, (cx, cy), SYMBOL),
+        FileGlyph::Table => (Icon::Table, (cx, cy), mark),
+        FileGlyph::Database => (Icon::Database, (cx, cy), mark),
+        FileGlyph::Java => (Icon::Coffee, (cx, cy), mark),
+        FileGlyph::Project => (Icon::Folders, (cx, cy + 0.4), 13.2),
+        FileGlyph::Plain => (Icon::File, (cx, cy), page),
+    };
+    draw(frame, icon, center, extent, STROKE, color, clip);
 }
 
 /// 用线条画的编程语言缩写（`FileGlyph::Letters`），整体居中在 `(cx, cy)`。

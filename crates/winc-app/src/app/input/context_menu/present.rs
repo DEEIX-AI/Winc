@@ -11,7 +11,7 @@ struct Prepared {
     label: MenuLabel,
     /// 快捷键的按键字符和修饰键位。
     key: (String, usize),
-    icon: Option<Image>,
+    icon: Option<Snapshot>,
     /// 图标的逻辑尺寸（宽，高）。
     icon_size: (f32, f32),
     enabled: bool,
@@ -1347,7 +1347,7 @@ impl App {
                 };
                 // 字体菜单只看列表中的第一个字体，「后备字体」看其余的字体。
                 let list = winc_config::font_list(self.font_value(*setting).as_deref());
-                let name = |i: usize| winc_render::installed_fonts().get(i).map(|f| &*f.name);
+                let name = |i: usize| cpui_render::installed_fonts().get(i).map(|f| &*f.name);
                 match command {
                     MenuCommand::Font(i) => name(i).is_some_and(|n| list.first() == Some(&n)),
                     MenuCommand::FallbackFont(i) => {

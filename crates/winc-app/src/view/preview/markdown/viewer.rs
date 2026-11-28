@@ -6,13 +6,13 @@
 
 use std::collections::{HashMap, HashSet};
 
-use winc_render::{FontKind, Frame, Rect, Stroke};
+use cpui_render::{Color, Font, Frame, Rect, Stroke};
 
 use super::body_size;
 use crate::app::App;
 use crate::app::preview::markdown::{DiagramLaid, DiagramTool, DiagramView, MAX_ZOOM, MIN_ZOOM};
 use crate::icons;
-use crate::theme::{Palette, RADIUS_POPUP};
+use crate::theme::{PROSE_FONT, Palette, RADIUS_POPUP};
 use winc_typeset::{Colors, Cx, Env, Item, Memo};
 
 /// 工具栏按钮的边长（逻辑像素），与预览中代码块的复制按钮相同。
@@ -57,7 +57,7 @@ pub(in crate::view) fn draw_diagram_view(app: &mut App, frame: &mut Frame<'_>) {
     }
     let area = view_area(app);
     let p = app.palette;
-    frame.rect(area, p.editor_bg);
+    frame.surface(area, p.editor_bg);
 
     let base = body_size(app);
     let Some(view) = app.preview.markdown.diagram.take() else {
@@ -69,7 +69,7 @@ pub(in crate::view) fn draw_diagram_view(app: &mut App, frame: &mut Frame<'_>) {
         let (w, h) = laid.size;
         let left = (area.x + (area.w - w) / 2.0 + view.pan.0).round();
         let top = (area.y + (area.h - h) / 2.0 + view.pan.1).round();
-        draw_items(frame, &laid.items, (left, top), area);
+        draw_items(frame, &laid.items, (left, top), p.editor_bg, area);
     }
     draw_toolbar(app, frame, p, &mut view, area);
     app.preview.markdown.diagram = Some(view);
@@ -157,6 +157,7 @@ fn lay_diagram(
     let mut cx = Cx {
         frame,
         base,
+        prose: PROSE_FONT,
         token: &token,
         surface: p.editor_bg,
         accent: p.accent,
@@ -186,7 +187,15 @@ fn lay_diagram(
 }
 
 /// 以 `(left, top)`（窗口坐标）为图的左上角绘制各项，跳过与 `clip` 不相交的项。
-fn draw_items(frame: &mut Frame<'_>, items: &[Item], (left, top): (f32, f32), clip: Rect) {
+///
+/// 与页面底色 `page` 同色的填充属于页面（连线文字的底色），背景图同样透出。
+fn draw_items(
+    frame: &mut Frame<'_>,
+    items: &[Item],
+    (left, top): (f32, f32),
+    page: Color,
+    clip: Rect,
+) {
     for item in items {
         let (y0, y1) = item.span_y();
         if top + y1 < clip.y || top + y0 > clip.bottom() {
@@ -198,21 +207,10 @@ fn draw_items(frame: &mut Frame<'_>, items: &[Item], (left, top): (f32, f32), cl
                 baseline,
                 text,
                 font,
-                faux,
-                size,
                 color,
                 ..
             } => {
-                frame.text_faux(
-                    *font,
-                    *faux,
-                    *size,
-                    left + x,
-                    top + baseline,
-                    text,
-                    *color,
-                    clip,
-                );
+                frame.text(*font, (left + x, top + baseline), text, *color, clip);
             }
             Item::Fill {
                 rect,
@@ -220,11 +218,15 @@ fn draw_items(frame: &mut Frame<'_>, items: &[Item], (left, top): (f32, f32), cl
                 radius,
             } => {
                 let r = Rect::new(left + rect.x, top + rect.y, rect.w, rect.h);
-                frame.rect_clipped(r, *color, *radius, clip);
+                if *color == page {
+                    frame.surface_clipped(r, *radius, *color, clip);
+                } else {
+                    frame.rect_clipped(r, *radius, *color, clip);
+                }
             }
             Item::Corners { rect, color, radii } => {
                 let r = Rect::new(left + rect.x, top + rect.y, rect.w, rect.h);
-                frame.rect_corners(r, *color, *radii, clip);
+                frame.rect_corners(r, *radii, *color, clip);
             }
             Item::Path {
                 strokes,
@@ -273,12 +275,12 @@ fn draw_toolbar(app: &App, frame: &mut Frame<'_>, p: &Palette, view: &mut Diagra
     for (tool, w) in tools {
         if tool == DiagramTool::Close {
             let line = Rect::new(x + PAD, bar.y + PAD * 2.0, 1.0, bar.h - PAD * 4.0);
-            frame.rect_clipped(line, p.separator, 0.0, area);
+            frame.rect_clipped(line, 0.0, p.separator, area);
             x += gap;
         }
         let r = Rect::new(x, bar.y + PAD, w, BUTTON);
         if view.hover == Some(tool) {
-            frame.rect_clipped(r, p.hover, RADIUS_POPUP - PAD, area);
+            frame.rect_clipped(r, RADIUS_POPUP - PAD, p.hover, area);
         }
         let center = (r.x + r.w / 2.0, r.y + r.h / 2.0);
         let color = p.text_muted;
@@ -289,13 +291,11 @@ fn draw_toolbar(app: &App, frame: &mut Frame<'_>, p: &Palette, view: &mut Diagra
             DiagramTool::Fit => {
                 let size = app.fonts.ui_small;
                 let label = format!("{:.0}%", view.scale() * 100.0);
-                let tw = frame.measure(FontKind::Ui, size, &label);
+                let tw = frame.measure(Font::ui(size), &label);
                 let baseline = crate::view::ui_baseline(app, r, size);
                 frame.text(
-                    FontKind::Ui,
-                    size,
-                    (center.0 - tw / 2.0).round(),
-                    baseline,
+                    Font::ui(size),
+                    ((center.0 - tw / 2.0).round(), baseline),
                     &label,
                     p.text,
                     area,

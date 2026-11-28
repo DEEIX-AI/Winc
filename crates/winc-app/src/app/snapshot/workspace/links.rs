@@ -173,7 +173,7 @@ fn unsaved_text_comes_back_under_the_link() {
     let mut editor = Editor::default();
     assert!(crate::open_session_folder(&mut editor, &session));
     let restored = crate::app::restore_at_launch(&mut editor, Some(&session), Some(&backups));
-    let mut app = App::new(editor, None, Bench::from_env(), Config::default());
+    let mut app = App::for_test(editor, Config::default());
     app.backup.root = Some(backups.clone());
     app.adopt_restored(restored);
     let docs: Vec<_> = (app.editor.documents.iter())

@@ -59,10 +59,10 @@ use std::rc::Rc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 
+use cpui_render::Rect;
 use winc_editor::DocumentId;
 use winc_editor::git::{Entry, Git, Head, LastCommit, Operation, Status};
 use winc_i18n::t;
-use winc_render::Rect;
 use winit::event::KeyEvent;
 use winit::keyboard::{Key, NamedKey};
 

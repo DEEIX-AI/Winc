@@ -7,7 +7,7 @@
 use super::*;
 use crate::app::git::combined::{Body, CombinedHit, SECTION_ROW, Section};
 use crate::view::workspace::sidebar::git_color;
-use winc_render::Stroke;
+use cpui_render::{Font, Stroke};
 
 /// 段与段之间斜线纹的线距（逻辑像素，取自调参）：够疏，不显得杂乱。
 const HATCH: f32 = 6.0;
@@ -91,7 +91,7 @@ pub(in crate::view) fn draw_combined(app: &mut App, frame: &mut Frame<'_>, index
     if count == 0 {
         let row = Rect::new(parts.body.x, parts.body.y + 24.0, parts.body.w, lh);
         let text = t!("git-combined-empty");
-        let w = frame.measure(FontKind::Ui, app.fonts.ui, text);
+        let w = frame.measure(Font::ui(app.fonts.ui), text);
         let x = row.x + (row.w - w) / 2.0;
         ui_text(frame, app, x, row, text, p.text_muted, parts.body);
     }
@@ -197,14 +197,14 @@ fn draw_section_header(
     let active = hovered(CombinedHit::Header(i))
         || hovered(CombinedHit::OpenFile(i))
         || hovered(CombinedHit::OpenDiff(i));
-    frame.rect(clip, p.editor_bg);
+    frame.surface(clip, p.editor_bg);
     if active {
         frame.rect(clip, p.hover);
     }
     // 吸顶时下面一条分隔线，与下面滚动的内容分开。
     if pinned {
         let line = Rect::new(rect.x, rect.bottom() - 1.0, rect.w, 1.0);
-        frame.rect_clipped(line, p.separator, 0.0, clip);
+        frame.rect_clipped(line, 0.0, p.separator, clip);
     }
 
     let cy = icon_center_y(app, rect, app.fonts.ui);
@@ -238,7 +238,7 @@ fn draw_section_header(
     let room = (right - x - NAME_MIN).max(0.0);
     for (text, color) in &texts {
         let text = ellipsize(frame, text, small, room);
-        right -= frame.measure(FontKind::Ui, small, &text);
+        right -= frame.measure(Font::ui(small), &text);
         ui_text_small(frame, app, right, rect, &text, *color, clip);
         right -= STAT_GAP;
     }
@@ -276,7 +276,7 @@ fn draw_section_header(
 /// 绘制工具栏：文件数和总的增删行数，右端的按钮与差异标签的标题栏相同。
 fn draw_toolbar(app: &App, frame: &mut Frame<'_>, bar: Rect, hits: &mut Vec<(Rect, CombinedHit)>) {
     let p = app.palette;
-    frame.rect(bar, p.editor_bg);
+    frame.surface(bar, p.editor_bg);
     frame.rect(
         Rect::new(bar.x, bar.bottom() - 1.0, bar.w, 1.0),
         p.separator,
@@ -390,7 +390,7 @@ fn draw_gap(frame: &mut Frame<'_>, p: &Palette, gap: Rect, clip: Rect) {
     if clip.h <= 0.0 {
         return;
     }
-    frame.rect(clip, p.editor_bg);
+    frame.surface(clip, p.editor_bg);
     let scale = frame.scale();
     let snap = |v: f32| (v * scale).round() / scale;
     let (top, bottom) = (snap(gap.y), snap(gap.bottom()));
@@ -404,6 +404,6 @@ fn draw_gap(frame: &mut Frame<'_>, p: &Palette, gap: Rect, clip: Rect) {
         x += HATCH;
     }
     for y in [gap.y, gap.bottom() - 1.0] {
-        frame.rect_clipped(Rect::new(gap.x, y, gap.w, 1.0), p.separator, 0.0, clip);
+        frame.rect_clipped(Rect::new(gap.x, y, gap.w, 1.0), 0.0, p.separator, clip);
     }
 }

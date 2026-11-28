@@ -214,7 +214,7 @@ pub(in crate::view::git) fn draw_graph_row(
         .iter()
         .any(|r| matches!(r, Ref::Head(_) | Ref::Detached));
     let dot = |frame: &mut Frame<'_>, r: f32, fill| {
-        frame.rect_clipped(Rect::new(c.0 - r, c.1 - r, 2.0 * r, 2.0 * r), fill, r, clip);
+        frame.rect_clipped(Rect::new(c.0 - r, c.1 - r, 2.0 * r, 2.0 * r), r, fill, clip);
     };
     let ink = color(graph.color, graph.line);
     // 圆点的半径（逻辑像素）：`HEAD` 最大，合并提交小一圈，普通提交居中。
@@ -229,7 +229,9 @@ pub(in crate::view::git) fn draw_graph_row(
     // `HEAD` 是空心圆，圆环与线条同样粗细。
     if head {
         let hole = r - GRAPH_LINE;
-        dot(frame, hole, style.bg);
+        // 圆内露出行的底面，再铺上行的高亮。
+        let inner = Rect::new(c.0 - hole, c.1 - hole, 2.0 * hole, 2.0 * hole);
+        frame.surface_clipped(inner, hole, style.bg, clip);
         if let Some(band) = band {
             dot(frame, hole, band);
         }

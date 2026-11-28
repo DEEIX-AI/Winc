@@ -60,7 +60,7 @@ if ($env:WINDOWS_CERTIFICATE_THUMBPRINT) { $nsisArgs += "/DSIGN_SCRIPT=$PSScript
 & $makensis @nsisArgs "$root/release/windows/installer.nsi"
 if ($LASTEXITCODE -ne 0) { throw "makensis failed with $LASTEXITCODE" }
 
-# WiX's license dialog consumes RTF; escape the plain Apache license without a new dependency.
+# WiX's license dialog consumes RTF; escape the plain-text license without a new dependency.
 $license = (Get-Content "$root/LICENSE" -Raw).Replace('\', '\\').Replace('{', '\{').Replace('}', '\}').Replace("`r", '').Replace("`n", '\par ')
 [IO.File]::WriteAllText("$stage/license.rtf", "{\rtf1\ansi $license}")
 $msi = "$bundle/msi/$stem.msi"

@@ -5,15 +5,15 @@
 //! 时进行，结果按顶层块缓存（[`Laid`]）：文字改了只重排变了的块，宽度、字号、配色或图片大小
 //! 变了才整份重排。换行时不在「，。」这类标点前面、「（“」这类标点后面断。
 
+use cpui_render::{Color, Font, Frame, Rect, Stroke};
 use winc_i18n::t;
-use winc_render::{Color, FontKind, Frame, Rect, Stroke};
 
 use crate::app::Hover;
 use crate::app::preview::markdown::resize::ImageAt;
 use crate::app::preview::markdown::{ImageSlot, TableBar, TocTarget};
 use crate::app::{App, Focus, ScrollArea};
 use crate::icons;
-use crate::theme::Palette;
+use crate::theme::{PROSE_FONT, Palette};
 
 mod layout;
 mod resize;
@@ -38,30 +38,19 @@ fn draw_plain(frame: &mut Frame<'_>, items: &[Item], (left, top): (f32, f32), cl
                 rect,
                 color,
                 radius,
-            } => frame.rect_clipped(at(rect), *color, *radius, clip),
+            } => frame.rect_clipped(at(rect), *radius, *color, clip),
             Item::Corners { rect, color, radii } => {
-                frame.rect_corners(at(rect), *color, *radii, clip);
+                frame.rect_corners(at(rect), *radii, *color, clip);
             }
             Item::Text {
                 x,
                 baseline,
                 text,
                 font,
-                faux,
-                size,
                 color,
                 ..
             } => {
-                frame.text_faux(
-                    *font,
-                    *faux,
-                    *size,
-                    left + x,
-                    top + baseline,
-                    text,
-                    *color,
-                    clip,
-                );
+                frame.text(*font, (left + x, top + baseline), text, *color, clip);
             }
             _ => {}
         }
@@ -82,7 +71,7 @@ fn draw_broken_links(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
         let mut x = rect.x;
         while x < rect.right() {
             let w = 2.0f32.min(rect.right() - x);
-            frame.rect_clipped(Rect::new(x, y, w, 1.0), color, 0.0, area);
+            frame.rect_clipped(Rect::new(x, y, w, 1.0), 0.0, color, area);
             x += 4.0;
         }
     }
@@ -95,7 +84,7 @@ fn draw_broken_links(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
 /// 需要读取的图片记进请求，下一帧再画。
 pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
     let p = app.palette;
-    frame.rect(area, p.editor_bg);
+    frame.surface(area, p.editor_bg);
     app.preview.markdown.area = area;
     // 可编辑的预览在排版之前取得当前文字的解析结果，本帧即按最新的结构显示。
     app.parse_markdown_inline();
@@ -386,8 +375,6 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
                         baseline,
                         text,
                         font,
-                        faux,
-                        size,
                         color,
                         span,
                     } => {
@@ -402,9 +389,9 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
                                 let (a, b) = (a - from, b - from);
                                 let x0: f32 = span.advances[..a].iter().sum();
                                 let x1: f32 = x0 + span.advances[a..b].iter().sum::<f32>();
-                                let (y0, h) = line_box(top + baseline, *size);
+                                let (y0, h) = line_box(top + baseline, font.size);
                                 let r = Rect::new(left + x + x0, y0, x1 - x0, h);
-                                frame.rect_clipped(r, color, 2.0, area);
+                                frame.rect_clipped(r, 2.0, color, area);
                             };
                             if let Some((search, current)) = matches {
                                 for &(a, b) in search.matches_in(from, to) {
@@ -443,12 +430,9 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
                                 mark(from + local(a), from + local(b), p.selection);
                             }
                         }
-                        frame.text_faux(
+                        frame.text(
                             *font,
-                            *faux,
-                            *size,
-                            left + x,
-                            top + baseline,
+                            (left + x, top + baseline),
                             text,
                             if fading.contains(&k) {
                                 color.alpha(color.a * fade)
@@ -458,13 +442,21 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
                             area,
                         );
                     }
+                    // 与页面同色的填充属于页面（连线文字的底色、收起的图下沿），背景图同样透出。
                     Item::Fill {
                         rect,
                         color,
                         radius,
-                    } => frame.rect_clipped(at(rect), *color, *radius, area),
+                    } if *color == p.editor_bg => {
+                        frame.surface_clipped(at(rect), *radius, *color, area);
+                    }
+                    Item::Fill {
+                        rect,
+                        color,
+                        radius,
+                    } => frame.rect_clipped(at(rect), *radius, *color, area),
                     Item::Corners { rect, color, radii } => {
-                        frame.rect_corners(at(rect), *color, *radii, area);
+                        frame.rect_corners(at(rect), *radii, *color, area);
                     }
                     Item::Image {
                         rect,
@@ -602,8 +594,8 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
         let band = Rect::new(left, origin_y + y, key.width, h);
         frame.rect_clipped(
             band,
-            p.accent.alpha(p.accent.a * alpha),
             TOC_FLASH_RADIUS,
+            p.accent.alpha(p.accent.a * alpha),
             area,
         );
     }
@@ -649,7 +641,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
         });
         let point = (x, y + shift, h);
         // 段落之后的空行上组字使用正文的字体，不沿用上方标题的字体。
-        let body = (winc_render::FontKind::Prose, Default::default(), key.base);
+        let body = Font::new(PROSE_FONT, key.base);
         let font = match blank {
             true => Some(body),
             false => font_at(&laid, source),
@@ -676,7 +668,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
     draw_table_scrollbar(app, frame, chosen, area);
     let (arrows, covered) = draw_heading_folds(app, frame, area, caret_bar);
     if let Some(bar) = caret_bar.filter(|_| !covered) {
-        frame.rect_clipped(bar, p.accent.alpha(0.7), 1.0, area);
+        frame.rect_clipped(bar, 1.0, p.accent.alpha(0.7), area);
     }
     // 分栏时在预览的文字中同一位置画出编辑区的光标，与编辑区的光标一同闪烁。
     if let Some((x, y, h)) = mirrored.filter(|_| app.blink.visible) {
@@ -686,7 +678,7 @@ pub(in crate::view) fn draw(app: &mut App, frame: &mut Frame<'_>, area: Rect) {
             2.0,
             h - 2.0,
         );
-        frame.rect_clipped(bar, p.caret, 1.0, area);
+        frame.rect_clipped(bar, 1.0, p.caret, area);
     }
     draw_source_numbers(app, frame, area, &arrows);
     draw_broken_links(app, frame, area);
@@ -731,7 +723,7 @@ fn draw_source_numbers(app: &App, frame: &mut Frame<'_>, area: Rect, skip: &[usi
     };
     let p = app.palette;
     let size = app.fonts.code;
-    let cell = frame.measure(FontKind::Mono, size, "0");
+    let cell = frame.measure(Font::mono(size), "0");
     let right = laid.left - NUMBER_GAP;
     if laid.left - number_room(app, frame) < area.x + 4.0 {
         return;
@@ -751,7 +743,7 @@ fn draw_source_numbers(app: &App, frame: &mut Frame<'_>, area: Rect, skip: &[usi
             false => p.text_dim,
         };
         let baseline = area.y + y - top;
-        frame.text(FontKind::Mono, size, x, baseline, &number, color, area);
+        frame.text(Font::mono(size), (x, baseline), &number, color, area);
     }
 }
 
@@ -895,7 +887,7 @@ fn number_room(app: &App, frame: &mut Frame<'_>) -> f32 {
     let Some(rope) = app.editor.active().and_then(|d| d.text().rope()) else {
         return 0.0;
     };
-    let cell = frame.measure(FontKind::Mono, app.fonts.code, "0");
+    let cell = frame.measure(Font::mono(app.fonts.code), "0");
     rope.len_lines().to_string().len() as f32 * cell + NUMBER_GAP
 }
 
@@ -1068,8 +1060,8 @@ fn draw_toc(app: &mut App, frame: &mut Frame<'_>, area: Rect, pad: f32) {
         let band = Rect::new(left, y0 - scroll + top, width, height);
         frame.rect_clipped(
             band,
-            p.accent.alpha(p.accent.a * alpha),
             TOC_FLASH_RADIUS,
+            p.accent.alpha(p.accent.a * alpha),
             area,
         );
     }
@@ -1087,7 +1079,7 @@ fn draw_toc(app: &mut App, frame: &mut Frame<'_>, area: Rect, pad: f32) {
     let widest = (hovered || pinned || closing.is_some()).then(|| {
         (headings.iter())
             .map(|(level, title, ..)| {
-                depth(*level) * TOC_INDENT + frame.measure(FontKind::Ui, size, title)
+                depth(*level) * TOC_INDENT + frame.measure(Font::ui(size), title)
             })
             .fold(0.0_f32, f32::max)
     });
@@ -1146,7 +1138,7 @@ fn draw_toc(app: &mut App, frame: &mut Frame<'_>, area: Rect, pad: f32) {
             TOC_DASH
         };
         let y = y0 + i as f32 * step + (TOC_BAR - thick) / 2.0;
-        frame.rect_clipped(Rect::new(x0, y, len, thick), color, thick / 2.0, area);
+        frame.rect_clipped(Rect::new(x0, y, len, thick), thick / 2.0, color, area);
     }
     let bars_h = (shown.max(1) - 1) as f32 * step + TOC_BAR;
     let bars = Rect::new(x0 - 8.0, y0 - 8.0, TOC_CURRENT + 16.0, bars_h + 16.0);
@@ -1216,7 +1208,7 @@ fn draw_toc(app: &mut App, frame: &mut Frame<'_>, area: Rect, pad: f32) {
                     TOC_ROW,
                 );
                 if app.pointer.hover == Hover::MarkdownToc(TocTarget::Heading(i)) {
-                    frame.rect_clipped(band, p.hover, crate::theme::RADIUS_ROW, reveal);
+                    frame.rect_clipped(band, crate::theme::RADIUS_ROW, p.hover, reveal);
                 }
                 let row_mid = band.y + band.h / 2.0;
                 let from = if i < shown { bar_y(i) } else { row_mid };
@@ -1227,21 +1219,13 @@ fn draw_toc(app: &mut App, frame: &mut Frame<'_>, area: Rect, pad: f32) {
                 let room = (band.right() - 8.0 - pin_room - tx).max(0.0);
                 let title = crate::view::ellipsize(frame, title, size, room);
                 // 当前所在一节的标题加粗显示。
-                let faux = winc_render::Faux {
-                    bold: current == Some(i),
-                    ..Default::default()
+                let font = if current == Some(i) {
+                    Font::ui(size).bold()
+                } else {
+                    Font::ui(size)
                 };
                 let baseline = crate::view::ui_baseline(app, band, size);
-                frame.text_faux(
-                    FontKind::Ui,
-                    faux,
-                    size,
-                    tx,
-                    baseline,
-                    &title,
-                    p.text,
-                    reveal,
-                );
+                frame.text(font, (tx, baseline), &title, p.text, reveal);
                 if live {
                     hits.push((band, TocTarget::Heading(i)));
                 }
@@ -1255,7 +1239,7 @@ fn draw_toc(app: &mut App, frame: &mut Frame<'_>, area: Rect, pad: f32) {
             );
             let pin_hovered = app.pointer.hover == Hover::MarkdownToc(TocTarget::Pin);
             if pin_hovered {
-                frame.rect_clipped(pin, p.hover, crate::theme::RADIUS_ROW, reveal);
+                frame.rect_clipped(pin, crate::theme::RADIUS_ROW, p.hover, reveal);
             }
             let color = match (pinned, pin_hovered) {
                 (true, _) => p.accent,
@@ -1286,7 +1270,7 @@ fn draw_toc(app: &mut App, frame: &mut Frame<'_>, area: Rect, pad: f32) {
                 TOC_DASH
             };
             let dash = Rect::new(card.x + dash_x, mid - thick / 2.0, len, thick);
-            frame.rect_clipped(dash, color, thick / 2.0, area);
+            frame.rect_clipped(dash, thick / 2.0, color, area);
         }
         // 卡片的内边距也算在内：鼠标经过行与行之外的地方时列表不收起。
         if live {
@@ -1316,7 +1300,7 @@ enum Composing {
     Inline(bool),
     /// 代码块和表格中组字覆盖在光标处绘制，字体字号同光标处的文字（`None`：无文字时用等宽
     /// 字体，字号见 [`line_box`]）。
-    Over(Option<(winc_render::FontKind, winc_render::Faux, f32)>),
+    Over(Option<Font>),
 }
 
 /// 绘制可编辑预览中的文字光标（左边缘 `x`、所在那一行的上边缘 `y` 和高度 `h`，窗口坐标），
@@ -1333,7 +1317,7 @@ fn draw_live_caret(
     let bar = |frame: &mut Frame<'_>, x: f32| {
         if app.blink.visible {
             let bar = Rect::new(x.round() - 1.0, y + 1.0, 2.0, h - 2.0);
-            frame.rect_clipped(bar, p.caret, 1.0, clip);
+            frame.rect_clipped(bar, 1.0, p.caret, clip);
         }
     };
     let font = match shape {
@@ -1349,26 +1333,22 @@ fn draw_live_caret(
         }
         Composing::Over(font) => font,
     };
-    let (font, faux, size) = font.unwrap_or((
-        winc_render::FontKind::Mono,
-        winc_render::Faux::default(),
-        h / 1.4,
-    ));
+    let font = font.unwrap_or(Font::mono(h / 1.4));
     // 光标的高度和基线均按 [`line_box`] 由字号计算。
-    let baseline = y + size * 1.05;
-    let width = frame.measure_faux(font, faux, size, preedit);
-    frame.rect_clipped(Rect::new(x, y, width, h), p.editor_bg, 0.0, clip);
-    frame.text_faux(font, faux, size, x, baseline, preedit, p.text, clip);
+    let baseline = y + font.size * 1.05;
+    let width = frame.measure(font, preedit);
+    frame.surface_clipped(Rect::new(x, y, width, h), 0.0, p.editor_bg, clip);
+    frame.text(font, (x, baseline), preedit, p.text, clip);
     frame.rect_clipped(
         Rect::new(x, baseline + 3.0, width, 1.0),
-        p.accent,
         0.0,
+        p.accent,
         clip,
     );
     let Some(at) = app.preedit_cursor(preedit) else {
         return Rect::new(x + width, y, 2.0, h);
     };
-    let at = x + frame.measure_faux(font, faux, size, &preedit[..at]);
+    let at = x + frame.measure(font, &preedit[..at]);
     bar(frame, at);
     Rect::new(at, y, 2.0, h)
 }
@@ -1381,8 +1361,8 @@ fn code_button(
     clip: Rect,
     icon: fn(&mut Frame<'_>, (f32, f32), Color, Rect),
 ) {
-    frame.rect_clipped(button, p.editor_bg, 6.0, clip);
-    frame.rect_clipped(button, p.text.alpha(0.08), 6.0, clip);
+    frame.rect_clipped(button, 6.0, p.editor_bg, clip);
+    frame.rect_clipped(button, 6.0, p.text.alpha(0.08), clip);
     let center = (button.x + button.w / 2.0, button.y + button.h / 2.0);
     icon(frame, center, p.text_muted, clip);
 }
@@ -1398,7 +1378,7 @@ pub(crate) fn copy_button(code: Rect) -> Rect {
 /// 任务列表的勾选框（逻辑像素）：选中时填强调色并画对勾，未选中时只画一个细边框。
 fn draw_check(frame: &mut Frame<'_>, p: &Palette, r: Rect, checked: bool, clip: Rect) {
     if checked {
-        frame.rect_clipped(r, p.accent, 3.0, clip);
+        frame.rect_clipped(r, 3.0, p.accent, clip);
         let (x, y, w, h) = (r.x, r.y, r.w, r.h);
         let mark = [
             Stroke::Line(x + w * 0.26, y + h * 0.52, x + w * 0.43, y + h * 0.69),
@@ -1406,8 +1386,8 @@ fn draw_check(frame: &mut Frame<'_>, p: &Palette, r: Rect, checked: bool, clip: 
         ];
         frame.stroke(&mark, 1.5, p.text_on_accent, clip);
     } else {
-        frame.rect_clipped(r, p.text_muted.alpha(0.6), 3.0, clip);
-        frame.rect_clipped(r.inset(1.0, 1.0), p.editor_bg, 2.0, clip);
+        frame.rect_clipped(r, 3.0, p.text_muted.alpha(0.6), clip);
+        frame.surface_clipped(r.inset(1.0, 1.0), 2.0, p.editor_bg, clip);
     }
 }
 

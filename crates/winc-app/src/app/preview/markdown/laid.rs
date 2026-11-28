@@ -7,7 +7,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use winc_render::{Color, Frame, Rect};
+use cpui_render::{Color, Frame, Rect};
 use winc_typeset::{Item, LaidBlock, Span, margins};
 
 pub(crate) use winc_typeset::{DETAILS, Memo};
@@ -679,7 +679,7 @@ impl Laid {
                         Item::Text {
                             x,
                             baseline,
-                            size,
+                            font,
                             text,
                             span: Some(span),
                             ..
@@ -688,7 +688,7 @@ impl Laid {
                             self.starts[i] + span.start,
                             *x - self.shift(i, k).0,
                             *baseline,
-                            *size,
+                            font.size,
                             span,
                             i,
                             &**text,
@@ -1194,10 +1194,7 @@ pub(crate) fn preedit_point(laid: &Laid, source: usize, k: usize, count: usize) 
 /// 返回原文位置 `source` 处（取法同 [`point_of`]）文字的字体、模拟粗斜体和字号。
 ///
 /// 输入法组字的文字按此样式绘制。
-pub(crate) fn font_at(
-    laid: &Laid,
-    source: usize,
-) -> Option<(winc_render::FontKind, winc_render::Faux, f32)> {
+pub(crate) fn font_at(laid: &Laid, source: usize) -> Option<cpui_render::Font> {
     let block = laid
         .ranges
         .iter()
@@ -1210,14 +1207,12 @@ pub(crate) fn font_at(
         .filter_map(|item| match item {
             Item::Text {
                 font,
-                faux,
-                size,
                 span: Some(span),
                 ..
             } => span
                 .source
                 .filter(|&s| s as usize <= source)
-                .map(|s| (s, (*font, *faux, *size))),
+                .map(|s| (s, *font)),
             _ => None,
         })
         .max_by_key(|(s, _)| *s)

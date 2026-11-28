@@ -1415,8 +1415,8 @@ pub struct ImeState {
     /// 为 `None`。
     pub(crate) preedit_cursor: Option<usize>,
     /// 输入法候选框应出现的位置。
-    pub(crate) cursor: Option<winc_render::Rect>,
-    pub(in crate::app) last_area: Option<winc_render::Rect>,
+    pub(crate) cursor: Option<cpui_render::Rect>,
+    pub(in crate::app) last_area: Option<cpui_render::Rect>,
     /// 上一次告知窗口的输入法是否启用；尚未告知时为 `None`。
     pub(in crate::app) allowed: Option<bool>,
 }

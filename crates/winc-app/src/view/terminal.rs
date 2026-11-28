@@ -13,10 +13,10 @@ mod tabs;
 
 use grid::*;
 
+use cpui_render::{Color, Font, Frame, Rect};
 use winc_i18n::t;
 use winc_pty::protocol::{Attrs, Block, Color as TermColor, Line, Modes, Style, Underline};
 use winc_pty::width::cells;
-use winc_render::{Color, FontKind, Frame, Rect};
 
 use super::*;
 use crate::app::Focus;
@@ -64,7 +64,7 @@ fn draw_tab_drop(app: &App, frame: &mut Frame<'_>) {
         Some((GroupDrop::Into { at: Some(_), .. }, line)) => frame.rect(line, p.accent),
         Some((_, area)) => {
             let area = area.inset(6.0, 6.0);
-            frame.rect_clipped(area, p.drop_target, RADIUS_ISLAND - 4.0, area);
+            frame.rect_clipped(area, RADIUS_ISLAND - 4.0, p.drop_target, area);
         }
         None => {}
     }
@@ -75,7 +75,7 @@ fn draw_tab_drop(app: &App, frame: &mut Frame<'_>) {
             }
             _ => {
                 let area = area.inset(6.0, 6.0);
-                frame.rect_clipped(area, p.drop_target, RADIUS_ISLAND - 4.0, area);
+                frame.rect_clipped(area, RADIUS_ISLAND - 4.0, p.drop_target, area);
             }
         }
     }
@@ -99,7 +99,7 @@ fn draw_panel(app: &mut App, frame: &mut Frame<'_>) {
         return;
     }
     let p = app.palette;
-    frame.rect(card, p.editor_bg);
+    frame.surface(card, p.editor_bg);
     // 「搜索」标签显示时整个面板都是搜索结果，标签栏是第一栏的。
     if app.docked_search_shown() {
         let Some(at) = app.terminal.panel_groups().next() else {
@@ -184,7 +184,7 @@ pub(in crate::view) fn draw_editor_terminal(app: &mut App, frame: &mut Frame<'_>
     let previous = std::mem::take(&mut app.hits.terminal);
     app.hits.terminal = Vec::new();
     app.with_terminal_group(at, |app| {
-        frame.rect(app.layout.editor, app.palette.editor_bg);
+        frame.surface(app.layout.editor, app.palette.editor_bg);
         draw_editor_rename(app, frame);
         draw_panes(app, frame);
         draw_find(app, frame);
@@ -395,7 +395,7 @@ fn draw_content(app: &mut App, frame: &mut Frame<'_>, focused: bool) {
                 (link.end - link.start) as f32 * cell,
                 1.0,
             );
-            frame.rect_clipped(under, p.accent, 0.0, view);
+            frame.rect_clipped(under, 0.0, p.accent, view);
         }
         if let Some(block) = tab.block_at(number).map(|i| &tab.blocks[i])
             && block.command == number
@@ -498,7 +498,7 @@ fn draw_band(app: &App, frame: &mut Frame<'_>, tab: &TermTab, row: ViewRow, at: 
         (MARK_W, color)
     };
     let bar = Rect::new(card.x + BAND_X, at.y + top, w, at.h - top - bottom);
-    frame.rect_clipped(bar, color, 0.0, card);
+    frame.rect_clipped(bar, 0.0, color, card);
 }
 
 /// 折起来的输出：一行「⋯ 1 284 行」，鼠标悬停（点击可展开）时颜色更亮。
@@ -523,11 +523,11 @@ fn draw_fold(
     let parts = ["⋯", count.as_str(), unit.as_str()];
     // 三段之间的空隙（逻辑像素），最后一段后面不留。
     let gaps = [6.0, 3.0, 0.0];
-    let widths = parts.map(|part| frame.measure(FontKind::Ui, app.fonts.ui, part));
+    let widths = parts.map(|part| frame.measure(Font::ui(app.fonts.ui), part));
     let pad = 8.0;
     let w = pad * 2.0 + widths.iter().sum::<f32>() + gaps.iter().sum::<f32>();
     let pill = Rect::new(row.x, row.y + 2.0, w, row.h - 4.0);
-    frame.rect_clipped(pill, fill, RADIUS_ROW, clip);
+    frame.rect_clipped(pill, RADIUS_ROW, fill, clip);
     let mut x = row.x + pad;
     for ((part, width), gap) in parts.iter().zip(widths).zip(gaps) {
         ui_text(frame, app, x, row, part, color, clip);
@@ -571,7 +571,7 @@ fn draw_outcome(
         return;
     }
     let code = (exit != 0).then(|| exit.to_string());
-    let measure = |frame: &mut Frame<'_>, s: &str| frame.measure(FontKind::Ui, app.fonts.ui, s);
+    let measure = |frame: &mut Frame<'_>, s: &str| frame.measure(Font::ui(app.fonts.ui), s);
     let icon = 10.0;
     let code_w = code.as_deref().map_or(0.0, |c| measure(frame, c) + 4.0);
     let time_w = duration.as_deref().map_or(0.0, |d| measure(frame, d) + 8.0);
@@ -622,16 +622,16 @@ fn draw_sticky(
     frame.within(content, |frame| {
         frame.shadow(band, 0.0, 6.0, 0.0, p.shadow, Some(covered));
     });
-    frame.rect_clipped(band, colors.default_bg(), 0.0, card);
+    frame.surface_clipped(band, 0.0, colors.default_bg(), card);
     let row = Rect::new(grid.x, band.bottom() - lh, grid.w, lh);
     let clip = Rect::new(grid.x, band.y, grid.w, band.h);
     if app.pointer.hover == Hover::TerminalBlock(BlockHit::Sticky) {
         let hover = Rect::new(grid.x - 4.0, row.y, grid.w + 4.0, lh);
-        frame.rect_clipped(hover, p.hover, RADIUS_ROW, band);
+        frame.rect_clipped(hover, RADIUS_ROW, p.hover, band);
     }
     if let Some(color) = band_color(p, block) {
         let bar = Rect::new(card.x + BAND_X, row.y + 2.0, MARK_W, lh - 4.0);
-        frame.rect_clipped(bar, color, 0.0, band);
+        frame.rect_clipped(bar, 0.0, color, band);
     }
     let baseline = baseline_in(
         row,
@@ -731,7 +731,7 @@ fn draw_header(app: &mut App, frame: &mut Frame<'_>, card: Rect) {
     if !vertical {
         let new = Rect::new(new_x, button_y, BUTTON, BUTTON);
         if app.pointer.hover == Hover::TerminalHeader(HeaderHit::New) {
-            frame.rect_clipped(new, p.hover, RADIUS_ROW, header);
+            frame.rect_clipped(new, RADIUS_ROW, p.hover, header);
         }
         icons::plus(
             frame,
@@ -763,7 +763,7 @@ fn draw_header(app: &mut App, frame: &mut Frame<'_>, card: Rect) {
     // 拆分当前的终端：面板在下方时左右排，在右侧时上下排，图标画的是拆开以后的排法。
     if let Some(split) = split {
         if app.pointer.hover == Hover::TerminalHeader(HeaderHit::Split) {
-            frame.rect_clipped(split, p.hover, RADIUS_ROW, header);
+            frame.rect_clipped(split, RADIUS_ROW, p.hover, header);
         }
         if app.terminal_right() {
             icons::single_column(frame, center(split), p.text_muted, header);
@@ -791,7 +791,7 @@ fn draw_header(app: &mut App, frame: &mut Frame<'_>, card: Rect) {
     // 最大化或还原面板，图标绘制的是点下去以后的样子。
     if let Some(maximize) = maximize {
         if app.pointer.hover == Hover::TerminalHeader(HeaderHit::Maximize) {
-            frame.rect_clipped(maximize, p.hover, RADIUS_ROW, header);
+            frame.rect_clipped(maximize, RADIUS_ROW, p.hover, header);
         }
         if app.terminal.maximized {
             icons::shrink(frame, center(maximize), p.text_muted, header);
@@ -803,7 +803,7 @@ fn draw_header(app: &mut App, frame: &mut Frame<'_>, card: Rect) {
 
     // 切换面板的位置（编辑区右边或下面），图标绘制的是点下去以后的位置。
     if app.pointer.hover == Hover::TerminalHeader(HeaderHit::Position) {
-        frame.rect_clipped(position, p.hover, RADIUS_ROW, header);
+        frame.rect_clipped(position, RADIUS_ROW, p.hover, header);
     }
     let center = (position.x + BUTTON / 2.0, position.y + BUTTON / 2.0);
     icons::panel(frame, center, !app.terminal_right(), p.text_muted, header);
@@ -811,7 +811,7 @@ fn draw_header(app: &mut App, frame: &mut Frame<'_>, card: Rect) {
 
     // 最右端：收起面板，箭头朝面板收进去的那一边。
     if app.pointer.hover == Hover::TerminalHeader(HeaderHit::Hide) {
-        frame.rect_clipped(hide, p.hover, RADIUS_ROW, header);
+        frame.rect_clipped(hide, RADIUS_ROW, p.hover, header);
     }
     let toward = if app.terminal_right() {
         icons::Direction::Right
@@ -879,7 +879,7 @@ fn run_buttons(app: &App, frame: &mut Frame<'_>, left: f32, end: f32, y: f32) ->
         };
         return (end - left - BUTTON >= title).then_some([button; 3]);
     };
-    let name = frame.measure(FontKind::Ui, app.fonts.ui, &config.name);
+    let name = frame.measure(Font::ui(app.fonts.ui), &config.name);
     if vertical {
         let full = run_menu_space(name, end - left, 0.0)?;
         let stop_share = app.terminal.strip.stop_share(app.run_config_running());
@@ -1007,7 +1007,7 @@ fn draw_terminal_tab(
     // 正在用的是哪一栏。
     if active && app.terminal.borrowed() {
         let fill = p.tab_fill.alpha(p.tab_fill.a * 0.5);
-        frame.rect_clipped(rect, fill, RADIUS_TAB, clip);
+        frame.rect_clipped(rect, RADIUS_TAB, fill, clip);
         let color = if tab.ended.is_some() {
             p.text_dim
         } else {
@@ -1033,7 +1033,7 @@ fn draw_terminal_tab(
     };
     if let Some(dot) = dot {
         let at = Rect::new(rect.x + 3.0, rect.y + 3.0, 5.0, 5.0);
-        frame.rect_clipped(at, dot, 2.5, clip);
+        frame.rect_clipped(at, 2.5, dot, clip);
     }
     let close = workspace::top_bar::tab_close(rect);
     if active || hovered {
@@ -1108,15 +1108,15 @@ fn draw_end_notice(app: &mut App, frame: &mut Frame<'_>, row: Rect, clip: Rect) 
         return;
     };
     // 屏幕写满时写在最后一行上，遮住那一行。
-    frame.rect_clipped(row, p.editor_bg, 0.0, clip);
+    frame.surface_clipped(row, 0.0, p.editor_bg, clip);
     ui_text(frame, app, row.x, row, &note, color, clip);
     // 运行配置的标签再次运行的是配置，不是打开 shell。
     let label = match app.terminal.tab() {
         Some(tab) if tab.run.is_some() && !app.terminal.crashed => t!("terminal-run-again"),
         _ => t!("terminal-restart"),
     };
-    let note_w = frame.measure(FontKind::Ui, app.fonts.ui, &note);
-    let label_w = frame.measure(FontKind::Ui, app.fonts.ui, label);
+    let note_w = frame.measure(Font::ui(app.fonts.ui), &note);
+    let label_w = frame.measure(Font::ui(app.fonts.ui), label);
     let button = Rect::new(
         row.x + note_w + 10.0,
         row.y,
@@ -1125,7 +1125,7 @@ fn draw_end_notice(app: &mut App, frame: &mut Frame<'_>, row: Rect, clip: Rect) 
     );
     let hovered = app.pointer.hover == Hover::TerminalHeader(HeaderHit::Restart);
     let fill = if hovered { p.hover } else { p.tab_fill };
-    frame.rect_clipped(button, fill, RADIUS_ROW, clip);
+    frame.rect_clipped(button, RADIUS_ROW, fill, clip);
     let icon = (
         button.x + 6.0 + icons::RETURN_KEY_WIDTH / 2.0,
         button.y + button.h / 2.0,
@@ -1157,7 +1157,7 @@ fn draw_find_marks(
         let display = tab.display_of(find.matches[at].0.line) as f32;
         let y = view.y + display * lh / content * view.h;
         let rect = Rect::new(x, y, MARK_SIZE.0, MARK_SIZE.1);
-        frame.rect_clipped(rect, color, 0.0, view_clip(card, view));
+        frame.rect_clipped(rect, 0.0, color, view_clip(card, view));
     };
     let step = (find.matches.len() / MAX_MARKS).max(1);
     for at in (0..find.matches.len()).step_by(step) {
@@ -1190,8 +1190,8 @@ fn draw_find(app: &mut App, frame: &mut Frame<'_>) {
     // 只绘制细边框：查找条紧邻标签栏，阴影会投到标签栏上。
     let covered = frame.covered(bar, RADIUS_TAB);
     let edge = bar.inset(-1.0, -1.0);
-    frame.rect_except(edge, p.popup_border, RADIUS_TAB + 1.0, covered);
-    frame.rounded(bar, p.popup_bg, RADIUS_TAB);
+    frame.rect_except(edge, RADIUS_TAB + 1.0, p.popup_border, covered);
+    frame.rounded(bar, RADIUS_TAB, p.popup_bg);
     let inset = (bar.h - BUTTON_SMALL) / 2.0;
     let button = |i: f32| {
         let x = bar.right() - inset - BUTTON_SMALL - i * (BUTTON_SMALL + BUTTON_GAP);
@@ -1255,7 +1255,7 @@ fn draw_find(app: &mut App, frame: &mut Frame<'_>) {
     } else {
         previous.x - 6.0
     };
-    let count_x = right - frame.measure(FontKind::Ui, app.fonts.ui_small, &count);
+    let count_x = right - frame.measure(Font::ui(app.fonts.ui_small), &count);
     ui_text_small(frame, app, count_x, bar, &count, count_color, bar);
     let text_right = if count.is_empty() {
         right

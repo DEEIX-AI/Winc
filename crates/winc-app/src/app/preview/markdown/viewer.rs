@@ -5,8 +5,8 @@
 
 use std::sync::Arc;
 
+use cpui_render::{Color, Rect};
 use winc_editor::DocumentId;
-use winc_render::{Color, Rect};
 use winc_typeset::Item;
 use winit::keyboard::{Key, NamedKey};
 

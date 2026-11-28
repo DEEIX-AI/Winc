@@ -7,8 +7,8 @@
 //!
 //! 坐标和尺寸都是逻辑像素。
 
+use cpui_render::{Color, FontKind, Rect, Stroke};
 use winc_preview::markdown::math::{self, Accent, Class, Font, Grid, Node};
-use winc_render::{Color, Faux, FontKind, Rect, Stroke};
 
 use super::{Cx, Item};
 
@@ -242,21 +242,21 @@ impl Math<'_, '_, '_> {
     fn glyphs(&mut self, text: &str, font: Font, env: Env) -> MathBox {
         let size = self.size(env.level);
         let kind = if font == Font::Text {
-            FontKind::Prose
+            self.cx.prose
         } else {
             FontKind::Math
         };
         let shown: String = text.chars().map(|c| letter(c, font)).collect();
+        let mut text_font = cpui_render::Font::new(kind, size);
         // 换不成数学粗体字母的（中文）模拟加粗。
-        let faux = Faux {
-            bold: matches!(font, Font::Bold | Font::BoldItalic) && shown == text,
-            italic: false,
-        };
+        if matches!(font, Font::Bold | Font::BoldItalic) && shown == text {
+            text_font = text_font.bold();
+        }
         let frame = &mut *self.cx.frame;
         let (mut w, mut asc, mut desc) = (0f32, 0f32, 0f32);
         for c in shown.chars() {
-            w += frame.advance_faux(kind, faux, size, c);
-            if let Some((top, bottom)) = frame.ink(kind, faux, size, c) {
+            w += frame.advance(text_font, c);
+            if let Some((top, bottom)) = frame.ink(text_font, c) {
                 asc = asc.max(top);
                 desc = desc.max(bottom);
             }
@@ -265,9 +265,7 @@ impl Math<'_, '_, '_> {
             x: 0.0,
             baseline: 0.0,
             text: shown.into(),
-            font: kind,
-            faux,
-            size,
+            font: text_font,
             color: env.color,
             span: None,
         };
@@ -572,16 +570,19 @@ impl Math<'_, '_, '_> {
         let s = self.size(env.level);
         let mut b = self.glyphs(text, Font::Roman, env);
         // 换成大字号，墨迹的中间对着数学轴。
-        if let Some(Item::Text { size, .. }) = b.items.first_mut() {
-            *size = s * factor;
+        if let Some(Item::Text { font, .. }) = b.items.first_mut() {
+            font.size = s * factor;
         }
-        let w = self.cx.frame.measure(FontKind::Math, s * factor, text);
+        let w = self
+            .cx
+            .frame
+            .measure(cpui_render::Font::new(FontKind::Math, s * factor), text);
         let (mut asc, mut desc) = (0f32, 0f32);
         for c in text.chars() {
-            if let Some((top, bottom)) =
-                self.cx
-                    .frame
-                    .ink(FontKind::Math, Faux::default(), s * factor, c)
+            if let Some((top, bottom)) = self
+                .cx
+                .frame
+                .ink(cpui_render::Font::new(FontKind::Math, s * factor), c)
             {
                 asc = asc.max(top);
                 desc = desc.max(bottom);
@@ -781,10 +782,13 @@ impl Math<'_, '_, '_> {
                 },
             );
             let size = s * f;
-            if let Some(Item::Text { size: sz, .. }) = big.items.first_mut() {
-                *sz = size;
+            if let Some(Item::Text { font, .. }) = big.items.first_mut() {
+                font.size = size;
             }
-            let w = self.cx.frame.measure(FontKind::Math, size, delim);
+            let w = self
+                .cx
+                .frame
+                .measure(cpui_render::Font::new(FontKind::Math, size), delim);
             let (asc, desc) = (glyph.asc * f, glyph.desc * f);
             let dy = (asc - desc) / 2.0 - axis;
             let mut out = MathBox::default();

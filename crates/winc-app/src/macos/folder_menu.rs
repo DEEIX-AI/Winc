@@ -20,7 +20,7 @@ pub struct FolderItem {
     /// 是否为当前文件，或通往当前文件的那一层目录；是时显示勾选标记。
     pub checked: bool,
     /// 标题前面的图标（16 × 16 逻辑像素，和文件树同一套）；没有时为 `None`。
-    pub icon: Option<Image>,
+    pub icon: Option<Snapshot>,
 }
 
 /// 列出一个目录在菜单中的各项的函数：`None` 表示分隔线；两个参数依次为要列出的目录和当前
